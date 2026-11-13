@@ -51,3 +51,17 @@ def test_whole_files_tracked_and_merge_base(git_repo):
     assert sorted(tracked_files(git_repo.path)) == ["a.py"]
     [f] = whole_files(git_repo.path, ["a.py"])
     assert f.added == {1: "x", 2: "y"} and f.old_path is None
+
+
+def test_path_with_space(git_repo):
+    base = git_repo.commit({"x.py": "a\n"})
+    head = git_repo.commit({"my file.py": "p\nq\n"})
+    [f] = changed_files(git_repo.path, DiffRefs(base, head))
+    assert f.path == "my file.py" and f.added == {1: "p", 2: "q"}
+
+
+def test_path_with_double_quote(git_repo):
+    base = git_repo.commit({"x.py": "a\n"})
+    head = git_repo.commit({'we"ird.py': "p\n"})
+    [f] = changed_files(git_repo.path, DiffRefs(base, head))
+    assert f.path == 'we"ird.py' and f.added == {1: "p"}

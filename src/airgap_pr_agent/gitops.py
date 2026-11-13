@@ -70,30 +70,28 @@ def whole_files(repo: Path, paths: list[str]) -> list[ChangedFile]:
     return result
 
 
-def _binary_paths(repo: Path, refs: DiffRefs) -> set[str]:
+def _numstat(repo: Path, refs: DiffRefs) -> list[tuple[str, str | None, bool]]:
+    """(path, old_path, is_binary) per changed file, in diff order; NUL-safe."""
     out = _git(
         repo, "diff", "--numstat", "-z", "--find-renames", "--diff-filter=AMR",
         refs.base, refs.head,
     ).decode("utf-8", "replace")
     parts = out.split("\0")
-    binary: set[str] = set()
+    entries: list[tuple[str, str | None, bool]] = []
     i = 0
     while i < len(parts):
         rec = parts[i]
         i += 1
-        if not rec:
-            continue
         fields = rec.split("\t", 2)
         if len(fields) < 3:
             continue
         add, _, name = fields
+        old = None
         if name == "":  # rename: next two NUL-separated entries are old, new
-            new = parts[i + 1] if i + 1 < len(parts) else ""
+            old, name = parts[i], parts[i + 1]
             i += 2
-            name = new
-        if add == "-":
-            binary.add(name)
-    return binary
+        entries.append((name, old, add == "-"))
+    return entries
 
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -104,36 +102,28 @@ def changed_files(repo: Path, refs: DiffRefs) -> list[ChangedFile]:
         repo, "diff", "--no-color", "--unified=0", "--find-renames",
         "--diff-filter=AMR", refs.base, refs.head,
     ).decode("utf-8", "replace")
-    binary = _binary_paths(repo, refs)
-
-    entries: list[dict] = []
-    cur: dict | None = None
+    # Paths come from the NUL-separated numstat; the diff text is used only for
+    # hunks, matched to files by order (one "diff --git" block per file).
+    entries = _numstat(repo, refs)
+    hunks: list[list[int]] = []
     for line in diff.split("\n"):
         if line.startswith("diff --git "):
-            cur = {"old": None, "path": None, "lines": []}
-            entries.append(cur)
-        elif cur is None:
-            continue
-        elif line.startswith("rename from "):
-            cur["old"] = line[len("rename from "):]
-        elif line.startswith("+++ b/"):
-            cur["path"] = line[len("+++ b/"):]
-        elif line.startswith("rename to "):
-            cur["path"] = cur["path"] or line[len("rename to "):]
-        elif line.startswith("@@"):
+            hunks.append([])
+        elif line.startswith("@@") and hunks:
             m = _HUNK.match(line)
             if m:
                 start = int(m.group(1))
                 count = 1 if m.group(2) is None else int(m.group(2))
-                cur["lines"].extend(range(start, start + count))
+                hunks[-1].extend(range(start, start + count))
+    if len(hunks) != len(entries):
+        raise GitError("diff and numstat disagree on changed files")
 
     result = []
-    for e in entries:
-        path = e["path"]
-        if path is None or path in binary:
+    for (path, old, is_binary), lines in zip(entries, hunks):
+        if is_binary:
             continue
         source = read_at(repo, refs.head, path)
         text = source.splitlines()
-        added = {n: text[n - 1] for n in e["lines"] if 0 < n <= len(text)}
-        result.append(ChangedFile(path, e["old"], added, source))
+        added = {n: text[n - 1] for n in lines if 0 < n <= len(text)}
+        result.append(ChangedFile(path, old, added, source))
     return result
