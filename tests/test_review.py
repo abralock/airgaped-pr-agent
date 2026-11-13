@@ -325,3 +325,18 @@ def test_malformed_versions_still_posts_summary(git_repo, tmp_cfg):
                               DiffRefs(base, head), transport=httpx.MockTransport(handler))
     assert run_review(git_repo.path, platform, tmp_cfg, None, GITLEAKS) == 0
     assert posted == ["/api/v4/projects/7/merge_requests/3/notes"]
+
+
+def test_bad_llm_url_skips_security_without_changing_exit_code(git_repo, tmp_cfg):
+    import httpx
+
+    from airgap_pr_agent.llm import LLMClient
+
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 2\n"})
+    llm = LLMClient("http://llm.internal:abc/v1", "k", "m", timeout=1, retries=0,
+                    max_requests=10, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    p = FakePlatform(DiffRefs(base, head))
+    assert run_review(git_repo.path, p, tmp_cfg, llm, GITLEAKS) == 0
+    assert "Security check skipped: model unreachable" in p.summaries[-1]

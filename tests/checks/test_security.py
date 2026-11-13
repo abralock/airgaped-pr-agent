@@ -214,3 +214,60 @@ def test_prompt_has_no_raw_secret_prefix_at_truncation_boundary():
     assert sent
     windows = {secret[i:i + 8] for i in range(len(secret) - 7)}
     assert not any(w in body for body in sent for w in windows)
+
+
+def test_invalid_llm_url_skips_check():
+    client = LLMClient("http://llm.invalid:abc/v1", "k", "m", timeout=1, retries=0,
+                       max_requests=10, transport=httpx.MockTransport(lambda r: reply([])))
+    res = security_findings([one_file()], client, SEC, LLM, Redactor([]), FILTER)
+    assert (res.status, res.note) == ("skipped", "model unreachable")
+
+
+def test_unexpected_error_marks_chunk_unreviewed():
+    class Broken:
+        def complete_json(self, system, user):
+            if "bad.py" in user:
+                raise RuntimeError("surprise")
+            return {"findings": [item(1)]}
+
+    res = security_findings([one_file("bad.py"), one_file("good.py")], Broken(), SEC, LLM,
+                            Redactor([]), FILTER)
+    assert res.status == "partial" and res.unreviewed == ["bad.py"]
+    assert [f.path for f in res.findings] == ["good.py"]
+
+
+def test_category_case_and_spacing_do_not_change_fingerprint():
+    a = run([one_file()], lambda r: reply([item(1, category="SQL Injection")])).findings[0]
+    b = run([one_file()], lambda r: reply([item(1, category=" sql injection ")])).findings[0]
+    assert a.fingerprint == b.fingerprint
+
+
+def test_worker_stops_further_requests_once_model_is_down():
+    import time
+
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if "f0.py" in request.content.decode():
+            # Keeps the result loop waiting on chunk 0, so only the worker that
+            # saw the failure can stop the remaining chunks.
+            time.sleep(0.3)
+            return reply([])
+        raise httpx.ConnectError("refused")
+
+    llm = LLM.model_copy(update={"concurrency": 2})
+    files = [one_file(f"f{i}.py") for i in range(10)]
+    res = security_findings(files, make_client(handler), SEC, llm, Redactor([]), FILTER)
+    assert len(calls) == 2
+    assert (res.status, res.note) == ("partial", "model unreachable")
+
+
+def test_context_only_chunks_not_sent():
+    # One changed line with wide context and a tight budget: the window splits
+    # into several chunks, and those with no "+" line must not use a request.
+    src = "\n".join(f"value_{i} = {'x' * 40}" for i in range(1, 41)) + "\n"
+    f = ChangedFile("a.py", None, {1: src.splitlines()[0]}, src)
+    chunks = build_chunks([f], 20, 1600)
+    assert chunks and all(c.changed for c in chunks)
+    assert [c.start for c in chunks] == [1]

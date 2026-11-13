@@ -129,6 +129,9 @@ class LLMClient:
             except httpx.TransportError as exc:
                 last = f"transport error ({type(exc).__name__})"
                 continue
+            except (httpx.HTTPError, httpx.InvalidURL) as exc:
+                # Not transient (bad LLM_BASE_URL, redirect loop, undecodable body).
+                raise LLMUnavailable(f"model request failed ({type(exc).__name__})") from None
             status = resp.status_code
             if status == 429 or status >= 500:
                 last = f"model endpoint returned {status}"

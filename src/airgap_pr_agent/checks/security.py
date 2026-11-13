@@ -92,7 +92,8 @@ def build_chunks(
             marked: set[int] = set()
 
             def flush(last: int) -> None:
-                if cur:
+                # A chunk with only context lines has nothing to review.
+                if cur and marked:
                     chunks.append(Chunk(f.path, first, last, set(marked), "\n".join(cur)))
 
             for n in range(lo, hi + 1):
@@ -144,7 +145,13 @@ def security_findings(
         if stop.is_set():
             raise _Skipped
         user = f"File: {redactor.redact(chunk.path)}\n\n{redactor.redact(chunk.text)}"
-        items = _parse(client.complete_json(SYSTEM_PROMPT, user))
+        try:
+            reply = client.complete_json(SYSTEM_PROMPT, user)
+        except (LLMUnavailable, RequestCapReached):
+            # Stop the other workers now, not when the result loop gets here.
+            stop.set()
+            raise
+        items = _parse(reply)
         lines = {}
         for row in chunk.text.split("\n"):
             lines[int(row[:6])] = row[9:]
@@ -162,7 +169,7 @@ def security_findings(
                     severity=Severity(it.severity),
                     title=f"Security: {category}",
                     message=it.explanation,
-                    fingerprint=fingerprint("security", chunk.path, category, norm),
+                    fingerprint=fingerprint("security", chunk.path, category.lower(), norm),
                     rule="llm-security",
                     suggestion=it.suggestion or None,
                 )
@@ -194,6 +201,9 @@ def security_findings(
                 unreviewed.add(chunk.path)
                 stop.set()
             except ValueError:
+                unreviewed.add(chunk.path)
+            except Exception:  # noqa: BLE001 - the advisory check must never fail the run
+                note = note or "unexpected error during model review"
                 unreviewed.add(chunk.path)
     if unavailable and succeeded == 0 and note == "model unreachable":
         return CheckResult(Check.SECURITY, [], status="skipped", note=note)

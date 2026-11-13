@@ -186,3 +186,20 @@ def test_non_string_content_is_unparseable_reply(content):
 
     with pytest.raises(ValueError):
         make(handler).complete_json("s", "u")
+
+
+def test_invalid_url_is_unavailable():
+    client = LLMClient("http://llm.local:abc/v1", "k-secret", "m", timeout=5, retries=0,
+                       max_requests=10, transport=httpx.MockTransport(lambda r: ok()))
+    with pytest.raises(LLMUnavailable) as ei:
+        client.complete_json("s", "u")
+    assert "k-secret" not in str(ei.value)
+
+
+@pytest.mark.parametrize("exc", [httpx.DecodingError, httpx.TooManyRedirects])
+def test_non_transport_http_errors_are_unavailable(exc):
+    def handler(req):
+        raise exc("boom", request=req)
+
+    with pytest.raises(LLMUnavailable):
+        make(handler).complete_json("s", "u")
