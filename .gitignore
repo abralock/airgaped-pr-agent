@@ -1,0 +1,10 @@
+.venv/
+.superpowers/
+.DS_Store
+__pycache__/
+*.egg-info/
+dist/
+/build/
+vendor/*.tar.gz
+pr-agent-report/
+.pytest_cache/

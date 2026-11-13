@@ -1,0 +1,17 @@
+checks: {secrets: true, non_english: true, security: true}
+paths:
+  include: ["**"]
+  exclude: ["**/vendor/**", "**/node_modules/**", "**/third_party/**", "**/dist/**", "**/build/**",
+            "**/*.min.js", "**/*.min.css", "**/*_pb2.py", "**/*.pb.go", "**/*.generated.*",
+            "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/poetry.lock", "**/Pipfile.lock",
+            "**/Cargo.lock", "**/go.sum", "**/composer.lock", "**/Gemfile.lock", "**/*.lock"]
+security: {min_severity: medium, context_lines: 20}
+non_english:
+  min_words: 4
+  min_confidence: 0.7
+  exclude: ["**/locale/**", "**/locales/**", "**/i18n/**", "**/*.po", "**/*.pot", "**/*.??.resx", "**/*.??-??.resx",
+            "**/testdata/**", "**/fixtures/**", "**/__fixtures__/**"]
+secrets: {allowlist: []}
+llm: {prompt_token_budget: 8000, concurrency: 2, timeout_seconds: 120, retries: 2,
+      max_requests_per_mr: 30, max_requests_full_scan: 300, json_mode: false}
+full_scan: {fail_on_secrets: true, sarif: false}
