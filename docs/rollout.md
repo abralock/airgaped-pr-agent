@@ -335,15 +335,26 @@ The only other way to stop a secret blocking is `checks.secrets: false` in
 It is just as visible in the MR diff, and reviewers should treat it the same
 way.
 
-Besides the upstream gitleaks rules, the bundled config adds two rules:
+Besides the upstream gitleaks rules, the bundled config adds three rules:
 
-- `hardcoded-password` catches a quoted literal of 6+ characters assigned to a credential-named key, for example `password = "Hunter2!prod"` or `"client_secret": "..."`.
-- `connection-string-credentials` catches the password in a URL such as `postgres://app:S3cretPass@db/x`.
+- `hardcoded-password` catches a quoted literal of 6+ characters assigned to a key that ends in a credential word (`password`, `passwd`, `secret`, `token`, `api_key`, `pwd`, `pass`). Examples: `password = "Hunter2!prod"`, `String dbPassword = "..."` and `"client_secret": "..."`. Keys that only contain the word, such as `tokenizer`, `token_url` or `password_reset_url`, don't match.
+- `hardcoded-password-unquoted` catches the same kind of key with an unquoted value. It only applies in config files: `.env`, `.env.*`, YAML, `.properties`, `.ini`, `.cfg`, `.conf` and `.toml`. Examples: `DB_PASSWORD=Hunter2!prod` and `password: Hunter2!prod`.
+- `connection-string-credentials` catches the password in a URL such as `postgres://app:S3cretPass@db/x` or `redis://:S3cretPass@cache:6379`.
 
-Both rules skip obvious placeholders: `changeme`, `example`, `xxx`, `${VAR}`,
-`{{ var }}`, `<your-password>`, `$VAR`, and a bare `password` in a URL. When an
-upstream rule (an AWS or Stripe key, for example) already reports the same
-value on the same line, only that more specific finding is shown.
+These rules don't report values that are clearly not secrets:
+
+- **Placeholders and templates:** anything containing `changeme`, `example`, `placeholder`, `dummy` or `redacted`; `xxxx` or `****`; `${VAR}`, `{{ var }}`, `<your-password>`, `%(name)s`, `$VAR` and `$(Var)`. These exceptions also apply to the upstream `generic-api-key` rule.
+- **Names rather than values:** environment variable names (`OPENAI_API_KEY`), lowercase identifiers and slugs (`db-credentials`, `bert-base-uncased`, `pbkdf2_sha256`), and paths, URLs or ARNs.
+- **In URLs:** well-known development passwords (`postgres`, `root`, `guest`, `admin`, `test`, `password`, ...) and any credentials on `localhost`, `127.0.0.1` or `[::1]`.
+
+As a result, a password made only of lowercase words joined by dashes (`correct-horse-battery-staple`) is not caught.
+
+The same secret can be found twice on one line. In that case:
+
+- If a specific upstream rule also matched (an AWS or Stripe key, for example), only the upstream finding is shown.
+- If the upstream rule is `generic-api-key`, gitleaks itself keeps the bundled rule's finding and drops the generic one.
+
+Either way, one secret on one line produces one comment.
 
 Each secret comment ends with the finding's fingerprint:
 
