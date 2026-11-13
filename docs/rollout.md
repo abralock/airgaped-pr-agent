@@ -138,7 +138,7 @@ This adds two jobs to the `test` stage. If your pipeline defines `stages:`, it
 must include `test`.
 
 - `pr-agent-review` runs on merge request pipelines.
-- `pr-agent-full-scan` runs on scheduled pipelines, and can be started by hand from **Run pipeline**. It writes `pr-agent-report/` as a job artifact.
+- `pr-agent-full-scan` runs on scheduled pipelines. In a pipeline started from **Run pipeline**, the job is `when: manual`: after starting the pipeline, press the job's play button to run the scan. It writes `pr-agent-report/` as a job artifact.
 
 ### Choosing the image
 
@@ -175,13 +175,15 @@ MR branch from also starting a branch pipeline, add this `workflow:rules` block:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
       when: never
     - if: $CI_COMMIT_BRANCH
 ```
 
-Scheduled and manually started pipelines are branch pipelines, so the full
-scan still runs.
+Scheduled and manually started (**Run pipeline**) pipelines are branch
+pipelines. The second rule keeps them, even on a branch that has an open MR.
+Without that rule, the `when: never` line would drop them there too.
 
 ### Full scans
 
@@ -322,11 +324,26 @@ Environment variables:
 
 ## 7. Allowlisting a false-positive secret
 
-The `secrets.allowlist` in `.pr-agent.yml` is the **only** way to silence a
-secret finding. The agent deliberately ignores a repository's own
+The `secrets.allowlist` in `.pr-agent.yml` is the **only** way to silence an
+individual secret finding. The agent deliberately ignores a repository's own
 `.gitleaks.toml`, its `.gitleaksignore` and inline `gitleaks:allow` comments.
 Because the allowlist lives in the repository, every change to it shows up in
 the MR diff, where a human reviewer sees it.
+
+The only other way to stop a secret blocking is `checks.secrets: false` in
+`.pr-agent.yml`. That turns the secret gate off entirely for the repository.
+It is just as visible in the MR diff, and reviewers should treat it the same
+way.
+
+Besides the upstream gitleaks rules, the bundled config adds two rules:
+
+- `hardcoded-password` catches a quoted literal of 6+ characters assigned to a credential-named key, for example `password = "Hunter2!prod"` or `"client_secret": "..."`.
+- `connection-string-credentials` catches the password in a URL such as `postgres://app:S3cretPass@db/x`.
+
+Both rules skip obvious placeholders: `changeme`, `example`, `xxx`, `${VAR}`,
+`{{ var }}`, `<your-password>`, `$VAR`, and a bare `password` in a URL. When an
+upstream rule (an AWS or Stripe key, for example) already reports the same
+value on the same line, only that more specific finding is shown.
 
 Each secret comment ends with the finding's fingerprint:
 
@@ -337,7 +354,7 @@ Copy it into the allowlist:
 ```yaml
 secrets:
   allowlist:
-    # Test fixture key, not a real credential (reviewed by @alice)
+    # Test fixture key, not a real credential (reviewed in !123)
     - fingerprint: 3f9c0a1b2c3d4e5f
     # Everything under the fake-credentials test fixtures
     - path: "tests/fixtures/fake-creds/**"
