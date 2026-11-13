@@ -6,7 +6,8 @@ from typing import Any
 import httpx
 
 from .checks.language import non_english_findings
-from .checks.secrets import run_gitleaks, secret_findings
+from .checks.secrets import Redactor, run_gitleaks, secret_findings
+from .checks.security import security_findings
 from .config import Config
 from .gitops import ChangedFile, DiffRefs, changed_files
 from .markers import SUMMARY_MARKER, parse_fp
@@ -25,18 +26,24 @@ def run_checks(
     gitleaks_bin: str,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
+    redactor = Redactor([])
     if cfg.checks.secrets:
         if refs is not None:
             leaks = run_gitleaks(repo, "range", refs, bin=gitleaks_bin)
         else:
             leaks = run_gitleaks(repo, "dir", bin=gitleaks_bin)
-        result, _redactor = secret_findings(
+        result, redactor = secret_findings(
             leaks, changed if refs is not None else None, cfg.secrets.allowlist
         )
         results.append(result)
     if cfg.checks.non_english:
         flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude, cfg.non_english.exclude)
         results.append(non_english_findings(changed, cfg.non_english, flt))
+    if cfg.checks.security:
+        flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude)
+        results.append(
+            security_findings(changed, llm, cfg.security, cfg.llm, redactor, flt)
+        )
     return results
 
 
