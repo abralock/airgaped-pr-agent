@@ -107,12 +107,13 @@ def test_unparseable_report_raises_without_leaking_contents(tmp_path):
 
 
 def test_paths_normalized_and_only_known_fields_kept(tmp_path):
-    report = [{"RuleID": "r", "Description": "d", "File": str(tmp_path / "sub" / "a.py"),
-               "StartLine": 1, "Secret": "s", "Commit": "", "Match": "m", "Extra": 1}]
+    # The fake reports File as <scanned source>/sub/a.py (the last argument).
     fake = _fake_gitleaks(
         tmp_path,
-        'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && cat > "$2" <<\'EOF\'\n'
-        + json.dumps(report) + "\nEOF\nshift; done\n",
+        'for a; do SRC="$a"; done\n'
+        'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && cat > "$2" <<EOF\n'
+        '[{"RuleID": "r", "Description": "d", "File": "$SRC/sub/a.py", "StartLine": 1,\n'
+        ' "Secret": "s", "Commit": "", "Match": "m", "Extra": 1}]\nEOF\nshift; done\n',
     )
     [leak] = run_gitleaks(tmp_path, "dir", bin=fake)
     assert leak["File"] == "sub/a.py"
@@ -226,7 +227,32 @@ def test_real_gitleaks_ignores_repo_controlled_suppression(git_repo):
     assert any(l["Secret"] == AWS and l["File"] == "a.py" for l in leaks), leaks
 
 
+def _raw_fingerprints(repo, secret):
+    """Run gitleaks directly (no isolation) and return the exact Fingerprint(s) it reports."""
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory() as t:
+        out = os.path.join(t, "r.json")
+        subprocess.run([_bin(), "dir", str(repo), "--no-banner", "--exit-code", "0",
+                        "--report-format", "json", "--report-path", out], capture_output=True, check=True)
+        return [l["Fingerprint"] for l in json.load(open(out)) if l["Secret"] == secret]
+
+
 @pytest.mark.requires_gitleaks
 def test_real_gitleaks_dir_ignores_gitleaksignore(git_repo):
-    git_repo.commit({"a.py": f'aws_access_key_id = "{AWS}"\n', ".gitleaksignore": "a.py:aws-access-token:1\n"})
-    assert any(l["Secret"] == AWS for l in run_gitleaks(git_repo.path, "dir", bin=_bin()))
+    git_repo.commit({"sub/a.py": f'aws_access_key_id = "{AWS}"\n'})
+    fps = _raw_fingerprints(git_repo.path, AWS)
+    assert fps
+    rel = "sub/a.py:aws-access-token:1"
+    (git_repo.path / ".gitleaksignore").write_text("\n".join([*fps, rel, str(git_repo.path.resolve()) + "/" + rel]) + "\n")
+    # Non-vacuous: a plain gitleaks scan IS suppressed by this ignore file ...
+    assert _raw_fingerprints(git_repo.path, AWS) == []
+    # ... but our scan is not, and File stays repo-relative.
+    leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
+    assert [l["File"] for l in leaks if l["Secret"] == AWS] == ["sub/a.py"]
+
+
+@pytest.mark.requires_gitleaks
+def test_real_gitleaks_dir_scans_gitleaksignore_itself_and_skips_dot_git(git_repo):
+    git_repo.commit({".gitleaksignore": f'# {AWS}\n', "a.py": "x = 1\n"})
+    leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
+    assert [l["File"] for l in leaks if l["Secret"] == AWS] == [".gitleaksignore"]

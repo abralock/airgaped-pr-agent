@@ -110,6 +110,27 @@ def _clean_stderr(raw: bytes) -> str:
     return _ANSI.sub("", raw.decode("utf-8", "replace"))
 
 
+def _build_mirror(repo: Path, mirror: Path, ignore_alias: str) -> None:
+    """Mirror the working tree as per-file symlinks so gitleaks' source root holds
+    no repo-controlled .gitleaksignore (it is aliased to a harmless name and still scanned)."""
+    mirror.mkdir()
+    root = str(repo)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames
+            if d != ".git" and not os.path.islink(os.path.join(dirpath, d))
+        ]
+        rel_dir = os.path.relpath(dirpath, root)
+        out_dir = mirror if rel_dir == "." else mirror / rel_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            src = os.path.join(dirpath, name)
+            if os.path.islink(src):
+                continue
+            dest_name = ignore_alias if (rel_dir == "." and name == ".gitleaksignore") else name
+            os.symlink(src, out_dir / dest_name)
+
+
 def run_gitleaks(
     repo: Path,
     mode: Literal["range", "dir", "history"],
@@ -128,6 +149,11 @@ def run_gitleaks(
         # In git modes gitleaks reads <source>/.gitleaksignore from the working tree
         # even with --gitleaks-ignore-path; scanning the git dir itself avoids that.
         source = _git_dir(repo) if mode in ("range", "history") else repo
+        ignore_alias = f"gitleaksignore-alias-{os.urandom(8).hex()}"
+        if mode == "dir":
+            # gitleaks dir mode also reads <source>/.gitleaksignore; scan a mirror instead.
+            source = Path(tmp) / "mirror"
+            _build_mirror(repo, source, ignore_alias)
         if mode == "range":
             assert refs is not None
             base += ["git", f"--log-opts={refs.base}..{refs.head}"]
@@ -145,6 +171,7 @@ def run_gitleaks(
             "--config", str(_BUNDLED_CONFIG),
             "--gitleaks-ignore-path", str(empty_ignore),
             "--ignore-gitleaks-allow",
+            *(["--follow-symlinks"] if mode == "dir" else []),
             str(source),
         ]
         try:
@@ -175,7 +202,12 @@ def run_gitleaks(
     leaks = []
     for d in data:
         leak = {k: d.get(k) for k in _KEPT_FIELDS}
+        # With --follow-symlinks gitleaks reports the symlink target (the real repo path).
         leak["File"] = _relative_posix(str(leak["File"] or ""), repo)
+        if mode == "dir":
+            leak["File"] = _relative_posix(leak["File"], source)
+        if leak["File"] == ignore_alias:
+            leak["File"] = ".gitleaksignore"
         leaks.append(leak)
     return leaks
 
