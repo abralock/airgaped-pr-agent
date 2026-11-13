@@ -92,3 +92,64 @@ def test_azure_template_scan_steps_get_no_access_token():
         if "script" in s and s["script"].startswith("pr-agent scan"):
             assert s["env"] == {"LLM_API_KEY": "$(LLM_API_KEY)"}
 
+
+def _workflow(name):
+    doc = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+    # PyYAML (YAML 1.1) reads the bare key `on` as boolean True.
+    return doc, doc.get("on", doc.get(True))
+
+
+def _run_steps(job):
+    return [s["run"] for s in job["steps"] if "run" in s]
+
+
+def _uses(job):
+    return [s["uses"] for s in job["steps"] if "uses" in s]
+
+
+def test_ci_workflow():
+    doc, on = _workflow("ci.yml")
+    assert set(on) == {"push", "pull_request"}
+    (job,) = doc["jobs"].values()
+    runs = _run_steps(job)
+    assert runs.index("scripts/fetch-gitleaks.sh") < runs.index(
+        "docker build --platform linux/amd64 --target test ."
+    )
+
+
+def test_release_workflow():
+    doc, on = _workflow("release.yml")
+    assert on == {"push": {"tags": ["v*"]}}
+    assert doc["permissions"] == {"contents": "write", "packages": "write"}
+    (job,) = doc["jobs"].values()
+    runs = _run_steps(job)
+    assert runs[0] == "scripts/fetch-gitleaks.sh"
+    assert "docker build --platform linux/amd64 --target test ." in runs
+    assert any(r.endswith("scripts/build-bundle.sh") for r in runs)
+    uses = _uses(job)
+    for action in (
+        "docker/setup-qemu-action@v3",
+        "docker/setup-buildx-action@v3",
+        "docker/login-action@v3",
+        "docker/build-push-action@v6",
+        "softprops/action-gh-release@v2",
+    ):
+        assert action in uses
+    steps = {s.get("uses"): s for s in job["steps"]}
+    login = steps["docker/login-action@v3"]["with"]
+    assert login == {
+        "registry": "ghcr.io",
+        "username": "${{ github.actor }}",
+        "password": "${{ secrets.GITHUB_TOKEN }}",
+    }
+    push = steps["docker/build-push-action@v6"]["with"]
+    assert push["platforms"] == "linux/amd64,linux/arm64"
+    assert push["push"] is True
+    assert push["context"] == "."
+    tags = push["tags"].splitlines()
+    assert tags == [
+        "${{ steps.image.outputs.name }}:${{ github.ref_name }}",
+        "${{ steps.image.outputs.name }}:latest",
+    ]
+    assert "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/airgaped-pr-agent" in " ".join(runs)
+    assert "dist/pr-agent-bundle-*.tar.gz" in steps["softprops/action-gh-release@v2"]["with"]["files"]
