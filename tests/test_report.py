@@ -47,3 +47,11 @@ def test_html_escapes(tmp_path):
     html = p.read_text()
     assert "&lt;script&gt;" in html and "<script>alert" not in html
     assert "repo&lt;x&gt;" in html
+
+
+def test_sarif_uri_is_encoded(tmp_path):
+    f = Finding(Check.SECURITY, "my dir/a b#1.py", 1, Severity.LOW, "t", "m", "fp")
+    p = tmp_path / "r.sarif"
+    write_sarif([CheckResult(Check.SECURITY, [f])], p)
+    loc = json.loads(p.read_text())["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
+    assert loc["artifactLocation"] == {"uri": "my%20dir/a%20b%231.py", "uriBaseId": "%SRCROOT%"}

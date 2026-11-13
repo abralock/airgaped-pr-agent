@@ -8,6 +8,7 @@ import json
 from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import quote
 
 from jinja2 import Environment, PackageLoader
 
@@ -76,7 +77,7 @@ def write_sarif(results: list[CheckResult], path: Path) -> None:
     for f in findings:
         rule_id = f"{f.check.value}/{f.rule or f.title}"
         rules.setdefault(rule_id, {"id": rule_id, "shortDescription": {"text": f.title}})
-        physical: dict = {"artifactLocation": {"uri": f.path}}
+        physical: dict = {"artifactLocation": {"uri": quote(f.path, safe="/"), "uriBaseId": "%SRCROOT%"}}
         if f.line is not None:
             physical["region"] = {"startLine": f.line}
         sarif_results.append(
