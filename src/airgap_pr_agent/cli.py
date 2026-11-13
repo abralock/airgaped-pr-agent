@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .checks.secrets import SecretScanError
 from .config import ConfigError, load_config
+from .fullscan import run_full_scan
 from .gitops import DiffRefs, GitError
 from .llm import LLMClient
 from .platforms.base import LogOnlyPlatform, Platform
@@ -22,6 +23,10 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--platform", choices=["auto", "gitlab", "azure", "local"], default="auto")
     review.add_argument("--base")
     review.add_argument("--head")
+    scan = sub.add_parser("scan", help="scan the whole repository")
+    scan.add_argument("--repo", default=".")
+    scan.add_argument("--out-dir", default="pr-agent-report")
+    scan.add_argument("--history", action="store_true")
     return parser
 
 
@@ -56,9 +61,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         repo = Path(args.repo)
         cfg = load_config(repo)
+        gitleaks_bin = os.environ.get("GITLEAKS_BIN", "gitleaks")
+        if args.command == "scan":
+            llm = LLMClient.from_env(
+                cfg.llm, os.environ, max_requests=cfg.llm.max_requests_full_scan
+            )
+            return run_full_scan(repo, cfg, llm, gitleaks_bin, Path(args.out_dir), args.history)
         llm = LLMClient.from_env(cfg.llm, os.environ, max_requests=cfg.llm.max_requests_per_mr)
         platform = _platform(args)
-        gitleaks_bin = os.environ.get("GITLEAKS_BIN", "gitleaks")
         return run_review(repo, platform, cfg, llm, gitleaks_bin)
     except (SecretScanError, ConfigError, GitError) as exc:
         print(f"pr-agent: error: {exc}", file=sys.stderr)

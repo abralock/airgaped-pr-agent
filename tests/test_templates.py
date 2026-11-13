@@ -15,3 +15,16 @@ def test_gitlab_template():
     assert job["stage"] == "test"
     assert job["rules"] == [{"if": '$CI_PIPELINE_SOURCE == "merge_request_event"'}]
     assert job["script"] == ["pr-agent review"]
+
+
+def test_gitlab_template_scan_job():
+    doc = yaml.safe_load((ROOT / "templates/gitlab/pr-agent.gitlab-ci.yml").read_text())
+    job = doc["pr-agent-full-scan"]
+    assert job["extends"] == ".pr-agent"
+    assert job["script"] == ["pr-agent scan --out-dir pr-agent-report"]
+    assert job["artifacts"]["when"] == "always"
+    assert job["artifacts"]["paths"] == ["pr-agent-report/"]
+    rules = job["rules"]
+    assert {"if": '$CI_PIPELINE_SOURCE == "schedule"'} in rules
+    web = [r for r in rules if "web" in r["if"]]
+    assert len(web) == 1 and web[0]["when"] == "manual" and web[0]["allow_failure"] is True

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR Agent full scan: {{ repo_name }}</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:2rem auto;max-width:60rem;padding:0 1rem;color:#1f2328}
+h1{font-size:1.5rem} h2{margin-top:2rem;border-bottom:1px solid #d0d7de;padding-bottom:.3rem}
+h3{margin-bottom:.3rem;text-transform:capitalize} h4{margin:.8rem 0 .2rem;font-family:ui-monospace,monospace;font-size:.9rem}
+.note{color:#9a6700} .finding{border-left:4px solid #d0d7de;padding:.2rem .8rem;margin:.4rem 0;background:#f6f8fa}
+.high{border-color:#cf222e} .medium{border-color:#bf8700} .low{border-color:#0969da}
+code{font-family:ui-monospace,monospace} .meta{color:#656d76;font-size:.85rem}
+</style>
+</head>
+<body>
+<h1>PR Agent full scan: {{ repo_name }}</h1>
+<p>{{ total }} finding(s).</p>
+{% for s in sections %}
+<h2>{{ s.title }} ({{ s.result.findings | length }})</h2>
+{% if s.result.status == "skipped" %}<p class="note">Check skipped: {{ s.result.note }}</p>
+{% elif s.result.status == "partial" %}<p class="note">Check incomplete: {{ s.result.note }}</p>{% endif %}
+{% if s.result.unreviewed %}<p class="note">Files not reviewed by the model:</p>
+<ul>{% for p in s.result.unreviewed %}<li><code>{{ p }}</code></li>{% endfor %}</ul>{% endif %}
+{% for sev, files in s.groups.items() %}
+<h3>{{ sev.value }}</h3>
+{% for path, fs in files.items() %}
+<h4>{{ path }}</h4>
+{% for f in fs %}
+<div class="finding {{ sev.value }}">
+<strong>{{ f.title }}</strong>{% if f.line is not none %} <span class="meta">line {{ f.line }}</span>{% endif %}
+{% if f.commit %} <span class="meta">commit {{ f.commit[:8] }}</span>{% endif %}
+<div>{{ f.message }}</div>
+{% if f.suggestion %}<pre>{{ f.suggestion }}</pre>{% endif %}
+<div class="meta">fingerprint <code>{{ f.fingerprint }}</code></div>
+</div>
+{% endfor %}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+</body>
+</html>

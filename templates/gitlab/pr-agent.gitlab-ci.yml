@@ -17,3 +17,18 @@ pr-agent-review:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   script:
     - pr-agent review
+
+pr-agent-full-scan:
+  extends: .pr-agent
+  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: true
+  script:
+    - pr-agent scan --out-dir pr-agent-report
+  artifacts:
+    when: always
+    paths:
+      - pr-agent-report/
