@@ -239,6 +239,25 @@ def run_gitleaks(
     return leaks
 
 
+def scan_file_contents(files: list[ChangedFile], bin: str = "gitleaks") -> list[dict]:
+    """Scan the given file contents (dir mode on a temporary copy of just those files).
+
+    Used only to build a Redactor: these leaks are never findings.
+    """
+    if not files:
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "files"
+        root.mkdir()
+        for f in files:
+            dest = (root / f.path).resolve()
+            if not dest.is_relative_to(root.resolve()):
+                raise SecretScanError("changed file path escapes the repository")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(f.source.encode("utf-8"))
+        return run_gitleaks(root, "dir", bin=bin)
+
+
 def _allowed(allowlist: list[AllowEntry], fp: str, path: str) -> bool:
     for entry in allowlist:
         # Empty strings are treated as unset; an entry with nothing usable never matches.

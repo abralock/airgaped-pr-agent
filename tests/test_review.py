@@ -207,3 +207,31 @@ def test_secret_inside_non_english_comment_masked_in_local_output(git_repo, caps
     captured = capsys.readouterr()
     assert rc == 1 and "Non-English" in captured.out
     assert CJK_SECRET not in captured.out + captured.err
+
+
+@pytest.mark.requires_gitleaks
+def test_pre_existing_secret_in_context_masked_in_prompt_without_finding(git_repo, tmp_cfg):
+    import json
+
+    import httpx
+
+    from airgap_pr_agent.llm import LLMClient
+
+    # Committed before the MR: the range scan never sees it, but the model gets
+    # it as a context line next to the changed line.
+    base = git_repo.commit({"a.py": f'aws_key = "{TOKEN}"\nx = 1\n'})
+    head = git_repo.commit({"a.py": f'aws_key = "{TOKEN}"\nx = 2\n'})
+    sent = []
+
+    def handler(request):
+        sent.append(request.content.decode())
+        content = json.dumps({"findings": []})
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    llm = LLMClient("http://llm.invalid/v1", "k", "m", timeout=1, retries=0,
+                    max_requests=10, transport=httpx.MockTransport(handler))
+    p = FakePlatform(DiffRefs(base, head))
+    assert run_review(git_repo.path, p, tmp_cfg, llm, GITLEAKS) == 0
+    assert sent and all(TOKEN not in body for body in sent)
+    assert any("AKIA****" in body for body in sent)
+    assert p.posted == [] and "Merge blocked" not in p.summaries[-1]

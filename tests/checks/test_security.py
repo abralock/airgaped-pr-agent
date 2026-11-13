@@ -200,3 +200,17 @@ def test_request_cap_marks_rest_unreviewed():
                             Redactor([]), FILTER)
     assert len(calls) == 30 and res.status == "partial" and res.note == "request cap reached"
     assert len(res.unreviewed) == 10
+
+
+def test_prompt_has_no_raw_secret_prefix_at_truncation_boundary():
+    secret = "Rq8vLm2KxW9pTz4NbC7d"
+    llm = LLM.model_copy(update={"prompt_token_budget": 1600})  # 400-character rows
+    # "     1 + " is 9 characters: the row cap falls 10 characters into the secret.
+    src = "x" * (400 - 9 - 10) + secret + "\n"
+    f = ChangedFile("a.py", None, {1: src.rstrip("\n")}, src)
+    sent = []
+    security_findings([f], make_client(lambda r: reply([]), sent=sent), SEC, llm,
+                      Redactor([secret]), FILTER)
+    assert sent
+    windows = {secret[i:i + 8] for i in range(len(secret) - 7)}
+    assert not any(w in body for body in sent for w in windows)

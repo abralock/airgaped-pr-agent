@@ -73,8 +73,14 @@ def _windows(changed: list[int], total: int, context: int) -> list[tuple[int, in
     return [(lo, hi) for lo, hi in merged]
 
 
-def build_chunks(files: list[ChangedFile], context_lines: int, token_budget: int) -> list[Chunk]:
+def build_chunks(
+    files: list[ChangedFile],
+    context_lines: int,
+    token_budget: int,
+    redactor: Redactor | None = None,
+) -> list[Chunk]:
     cap = max((token_budget - _PROMPT_OVERHEAD_TOKENS) * _CHARS_PER_TOKEN, _MIN_CHUNK_CHARS)
+    redact = redactor.redact if redactor is not None else (lambda text: text)
     chunks: list[Chunk] = []
     for f in files:
         lines = f.source.splitlines()
@@ -91,7 +97,8 @@ def build_chunks(files: list[ChangedFile], context_lines: int, token_budget: int
 
             for n in range(lo, hi + 1):
                 mark = "+" if n in f.added else " "
-                row = f"{n:>6} {mark} {lines[n - 1]}"[:cap]
+                # Redact before truncating: a cut secret no longer matches the Redactor.
+                row = f"{n:>6} {mark} {redact(lines[n - 1])}"[:cap]
                 if cur and size + len(row) + 1 > cap:
                     flush(n - 1)
                     cur, size, first, marked = [], 0, n, set()
@@ -129,7 +136,7 @@ def security_findings(
     if client is None:
         return CheckResult(Check.SECURITY, [], status="skipped", note="model not configured")
     allowed = [f for f in files if path_filter.allows(f.path)]
-    chunks = build_chunks(allowed, cfg.context_lines, llm_cfg.prompt_token_budget)
+    chunks = build_chunks(allowed, cfg.context_lines, llm_cfg.prompt_token_budget, redactor)
     min_rank = cfg.min_severity.rank
     stop = threading.Event()
 

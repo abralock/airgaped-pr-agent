@@ -6,7 +6,9 @@ from typing import Any
 import httpx
 
 from .checks.language import non_english_findings
-from .checks.secrets import Redactor, redact_findings, run_gitleaks, secret_findings
+from .checks.secrets import (
+    Redactor, redact_findings, run_gitleaks, scan_file_contents, secret_findings,
+)
 from .checks.security import security_findings
 from .config import Config
 from .gitops import ChangedFile, DiffRefs, changed_files
@@ -32,10 +34,15 @@ def run_checks(
             leaks = run_gitleaks(repo, "range", refs, bin=gitleaks_bin)
         else:
             leaks = run_gitleaks(repo, "dir", bin=gitleaks_bin)
-        result, redactor = secret_findings(
+        result, _ = secret_findings(
             leaks, changed if refs is not None else None, cfg.secrets.allowlist
         )
         results.append(result)
+        # The model and the other checks see whole head files, so a secret that
+        # predates this MR can sit in a context line. Mask those too; they are
+        # not this MR's findings and never affect the exit code.
+        context = scan_file_contents(changed, bin=gitleaks_bin) if refs is not None else []
+        redactor = Redactor(leak["Secret"] or "" for leak in leaks + context)
     if cfg.checks.non_english:
         flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude, cfg.non_english.exclude)
         results.append(non_english_findings(changed, cfg.non_english, flt, redactor))
