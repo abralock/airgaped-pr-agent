@@ -337,17 +337,17 @@ way.
 
 Besides the upstream gitleaks rules, the bundled config adds three rules:
 
-- `hardcoded-password` catches a quoted literal of 6+ characters assigned to a key that ends in a credential word (`password`, `passwd`, `secret`, `token`, `api_key`, `pwd`, `pass`). Examples: `password = "Hunter2!prod"`, `String dbPassword = "..."` and `"client_secret": "..."`. Keys that only contain the word, such as `tokenizer`, `token_url` or `password_reset_url`, don't match.
-- `hardcoded-password-unquoted` catches the same kind of key with an unquoted value. It only applies in config files: `.env`, `.env.*`, YAML, `.properties`, `.ini`, `.cfg`, `.conf` and `.toml`. Examples: `DB_PASSWORD=Hunter2!prod` and `password: Hunter2!prod`.
+- `hardcoded-password` catches a quoted literal of 6+ characters assigned to a key that ends in a credential word: `password`, `passwd`, `secret`, `token`, `api_key`, `secret_key`, `private_key`, `access_key`, `pwd` or `pass`. An environment suffix such as `_PROD` or `_staging` is allowed after the word. Examples: `password = "Hunter2!prod"`, `String dbPassword = "..."`, `"client_secret": "..."` and `DB_PASSWORD_PROD = "..."`. Keys that only contain the word, such as `tokenizer`, `token_url` or `password_reset_url`, don't match.
+- `hardcoded-password-unquoted` catches the same kind of key with an unquoted value. It only applies in config files: `.env`, `.env.*`, `*.env`, `.envrc`, YAML, `.properties`, `.ini`, `.cfg`, `.conf` and `.toml`. Examples: `DB_PASSWORD=Hunter2!prod` and `password: Hunter2!prod`.
 - `connection-string-credentials` catches the password in a URL such as `postgres://app:S3cretPass@db/x` or `redis://:S3cretPass@cache:6379`.
 
 These rules don't report values that are clearly not secrets:
 
 - **Placeholders and templates:** anything containing `changeme`, `example`, `placeholder`, `dummy` or `redacted`; `xxxx` or `****`; `${VAR}`, `{{ var }}`, `<your-password>`, `%(name)s`, `$VAR` and `$(Var)`. These exceptions also apply to the upstream `generic-api-key` rule.
-- **Names rather than values:** environment variable names (`OPENAI_API_KEY`), lowercase identifiers and slugs (`db-credentials`, `bert-base-uncased`, `pbkdf2_sha256`), and paths, URLs or ARNs.
+- **Names rather than values:** environment variable names (`OPENAI_API_KEY`), words joined by `-`, `_`, `.` or `/` (`db-credentials`, `bert-base-uncased`, `monitoring/basic-auth`), single or CamelCase words (`Authorization`, `SecretsManager`), and paths, URLs, ARNs or `classpath:`/`file:`/`vault:` references. Every word must be letters only; env var names may also end a segment with up to two digits. So random tokens such as `QX7Z2LMPK4R8T`, `ABCD_EFGH1234_IJKL5678` or `hunter2-prod` are still reported. These name exceptions apply only to the bundled rules: upstream `generic-api-key` behaves exactly as in stock gitleaks, false positives such as `password_hasher = "argon2id-v19"` included.
 - **In URLs:** well-known development passwords (`postgres`, `root`, `guest`, `admin`, `test`, `password`, ...) and any credentials on `localhost`, `127.0.0.1` or `[::1]`.
 
-As a result, a password made only of lowercase words joined by dashes (`correct-horse-battery-staple`) is not caught.
+As a result, a password made only of letters is not caught by the bundled rules, whether it is a single word (`Sunshine`) or words joined by dashes (`correct-horse-battery-staple`).
 
 The same secret can be found twice on one line. In that case:
 

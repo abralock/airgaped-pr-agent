@@ -275,6 +275,29 @@ PASSWORD_POSITIVES = [
     ("db.py", 'URL = "postgres://app:S3cretPass@db:5432/x"\n', "S3cretPass"),
     (".env", "DB_PASSWORD=Hunter2!prod\n", "Hunter2!prod"),
     ("values.yaml", "db:\n  password: Hunter2!prod\n", "Hunter2!prod"),
+    ("prod.env", "DB_PASSWORD=Hunter2!prod\n", "Hunter2!prod"),
+    (".envrc", "export DB_PASSWORD=Hunter2!prod\n", "Hunter2!prod"),
+    ("django.py", 'SECRET_KEY = "Hunter2!prod"\n', "Hunter2!prod"),
+    ("suffix.py", 'DB_PASSWORD_PROD = "Hunter2!prod"\n', "Hunter2!prod"),
+    # Token shapes that must never be mistaken for names (ruling R18).
+    ("k01.py", 'apikey = "QX7Z2LMPK4R8TABCDEF9GHJKLMN2PQRS"\n', "QX7Z2LMPK4R8TABCDEF9GHJKLMN2PQRS"),
+    ("k02.py", 'token = "ABCD_EFGH1234_IJKL5678_MNOP9012"\n', "ABCD_EFGH1234_IJKL5678_MNOP9012"),
+    ("k03.py", 'notion_key = "secret_Xk9mQ2vL8pR4tN7wY3zB6cF1hJ5dG0sAeUiOq2"\n',
+     "secret_Xk9mQ2vL8pR4tN7wY3zB6cF1hJ5dG0sAeUiOq2"),
+    ("k04.py", 'groq_key = "gsk_8fHq2LmZx9VtRk3YpNw6BcJd4GsTa7EuQw1BnPo0Zx"\n',
+     "gsk_8fHq2LmZx9VtRk3YpNw6BcJd4GsTa7EuQw1BnPo0Zx"),
+    ("k05.py", 'supabase_key = "sbp_8f3a9b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f90"\n',
+     "sbp_8f3a9b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f90"),
+    ("k06.py", 'access_key = "key_8f14e45fceea167a5a36dedd4bea2543"\n', "key_8f14e45fceea167a5a36dedd4bea2543"),
+    ("k07.py", 'private_key = "pk_A1b2C3d4E5f6G7h8I9j0K1l2M3n4"\n', "pk_A1b2C3d4E5f6G7h8I9j0K1l2M3n4"),
+    ("k08.py", 'secret_key = "r8_Qw9Ex7Rt5Yu3Io1Pa2Sd4Fg6Hj8Kl0Zx"\n', "r8_Qw9Ex7Rt5Yu3Io1Pa2Sd4Fg6Hj8Kl0Zx"),
+    ("k09.py", 'api_key = "abc-def123-ghij456-klmno789-pqrs0"\n', "abc-def123-ghij456-klmno789-pqrs0"),
+    ("k10.py", 'password = "Q9X7Z2LMPK4R8T"\n', "Q9X7Z2LMPK4R8T"),
+    ("k11.py", 'password = "HUNTER2PROD!"\n', "HUNTER2PROD!"),
+    ("k12.py", 'password = "abc_Q9x7Z2Lm"\n', "abc_Q9x7Z2Lm"),
+    ("k13.py", 'password = "hunter2-prod"\n', "hunter2-prod"),
+    ("k14.env", "API_TOKEN=Q9X7Z2LMPK4R8T\n", "Q9X7Z2LMPK4R8T"),
+    ("k15.env", "DB_PASSWORD=hunter2_prod99\n", "hunter2_prod99"),
 ]
 
 # Must not be reported. The placeholders have enough entropy to pass the
@@ -305,7 +328,18 @@ PASSWORD_NEGATIVES = {
         'password_reset_url = "/accounts/password/reset/"\n'
         'csrf_token_name = "csrftoken"\n'
         'password_hash_algo = "pbkdf2_sha256"\n'
-        'password_hasher = "argon2id-v19"\n'
+        'password = "DB_PASSWORD"\n'
+        'token = "OPENAI_API_KEY"\n'
+        'api_key = "LLM_API_KEY"\n'
+        'secret = "DJANGO_SECRET_KEY"\n'
+        'secret = "AWS_SECRET_ACCESS_KEY"\n'
+        'TOKEN_TYPE = "Bearer"\n'
+        'auth_header_token = "Authorization"\n'
+        'CSRF_HEADER_TOKEN = "X-CSRFToken"\n'
+        'secret = "SecretsManager"\n'
+        'token = "access_token"\n'
+        'password = getpass.getpass("Password: ")\n'
+        'api_key = os.getenv("API_KEY", "")\n'
         'secretsmanager_arn_prefix = "arn:aws:secretsmanager"\n'
         'passage = "Lorem-ipsum-dolor"\n'
         'compass_heading = "north-northwest-x"\n'
@@ -338,7 +372,31 @@ PASSWORD_NEGATIVES = {
         "  token_url: https://login.example.org/oauth/token\n"
     ),
     ".env": "DB_PASSWORD=\nAPI_TOKEN=${API_TOKEN}\nSECRET_KEY=changeme-Prod1\n",
+    "locales/es.json": '{"password": "Contraseña", "token": "Ficha", "newPassword": "Nueva-contraseña"}\n',
+    "locales/nl.json": '{"password": "Wachtwoord", "forgotPassword": "Wachtwoord vergeten?"}\n',
+    "application.properties": (
+        "spring.datasource.password=${DB_PASSWORD:}\n"
+        "spring.security.oauth2.client.registration.github.client-secret=${GITHUB_CLIENT_SECRET}\n"
+        "server.ssl.key-store-password=classpath:keystore.p12\n"
+    ),
+    "k8s/ingress.yaml": (
+        "metadata:\n"
+        "  annotations:\n"
+        "    nginx.ingress.kubernetes.io/auth-secret: monitoring/basic-auth\n"
+        "auth:\n"
+        "  existingSecret: my-release-postgresql\n"
+        "  password: {{ .Values.auth.password | b64enc | quote }}\n"
+    ),
 }
+
+
+@pytest.mark.requires_gitleaks
+def test_upstream_generic_rule_baseline_is_not_suppressed(git_repo):
+    # The name-shaped allowlists apply only to the bundled rules. Upstream
+    # generic-api-key keeps its own behaviour, false positives included.
+    git_repo.commit({"a.py": 'password_hasher = "argon2id-v19"\n'})
+    leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
+    assert [(l["RuleID"], l["Secret"]) for l in leaks] == [("generic-api-key", "argon2id-v19")]
 
 
 def _secrets_by_file(leaks):
@@ -353,16 +411,16 @@ def test_bundled_rules_catch_passwords_and_connection_strings_range(git_repo):
     base = git_repo.commit({"README": "x\n"})
     head = git_repo.commit({name: body for name, body, _ in PASSWORD_POSITIVES})
     found = _secrets_by_file(run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin()))
-    for name, _, secret in PASSWORD_POSITIVES:
-        assert secret in found.get(name, set()), name
+    missing = [name for name, _, secret in PASSWORD_POSITIVES if secret not in found.get(name, set())]
+    assert missing == []
 
 
 @pytest.mark.requires_gitleaks
 def test_bundled_rules_catch_passwords_and_connection_strings_dir(git_repo):
     git_repo.commit({name: body for name, body, _ in PASSWORD_POSITIVES})
     found = _secrets_by_file(run_gitleaks(git_repo.path, "dir", bin=_bin()))
-    for name, _, secret in PASSWORD_POSITIVES:
-        assert secret in found.get(name, set()), name
+    missing = [name for name, _, secret in PASSWORD_POSITIVES if secret not in found.get(name, set())]
+    assert missing == []
 
 
 @pytest.mark.requires_gitleaks
