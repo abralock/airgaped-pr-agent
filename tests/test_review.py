@@ -235,3 +235,15 @@ def test_pre_existing_secret_in_context_masked_in_prompt_without_finding(git_rep
     assert sent and all(TOKEN not in body for body in sent)
     assert any("AKIA****" in body for body in sent)
     assert p.posted == [] and "Merge blocked" not in p.summaries[-1]
+
+
+@pytest.mark.requires_gitleaks
+def test_mr_adding_submodule_reviews_cleanly(git_repo, tmp_cfg):
+    from test_gitops import _submodule
+
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    _submodule(git_repo)
+    head = git_repo.commit({"a.py": "x = 2\n"})
+    p = FakePlatform(DiffRefs(base, head))
+    assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
+    assert "✅ No issues found." in p.summaries[-1]

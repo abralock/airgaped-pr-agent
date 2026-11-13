@@ -65,3 +65,39 @@ def test_path_with_double_quote(git_repo):
     head = git_repo.commit({'we"ird.py': "p\n"})
     [f] = changed_files(git_repo.path, DiffRefs(base, head))
     assert f.path == 'we"ird.py' and f.added == {1: "p"}
+
+
+def _submodule(git_repo, name="dep"):
+    """An embedded repo committed as a gitlink (mode 160000), as `git submodule add` does."""
+    import subprocess
+
+    sub = git_repo.path / name
+    sub.mkdir()
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@e"],
+                 ["config", "user.name", "T"], ["config", "commit.gpgsign", "false"]):
+        subprocess.run(["git", *args], cwd=sub, check=True, capture_output=True)
+    (sub / "lib.py").write_text("y = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=sub, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "s"], cwd=sub, check=True, capture_output=True)
+    return sub
+
+
+def test_added_and_bumped_submodule_skipped(git_repo):
+    base = git_repo.commit({"a.py": "x\n"})
+    sub = _submodule(git_repo)
+    added = git_repo.commit({"a.py": "x\ny\n"})
+    assert [f.path for f in changed_files(git_repo.path, DiffRefs(base, added))] == ["a.py"]
+    (sub / "lib.py").write_text("y = 2\n")
+    import subprocess
+    subprocess.run(["git", "commit", "-qam", "s2"], cwd=sub, check=True, capture_output=True)
+    bumped = git_repo.commit({})
+    assert git_repo.git("diff", "--name-only", added, bumped) == "dep"
+    assert changed_files(git_repo.path, DiffRefs(added, bumped)) == []
+
+
+def test_tracked_and_whole_files_skip_submodules(git_repo):
+    git_repo.commit({"a.py": "x\n"})
+    _submodule(git_repo)
+    git_repo.commit({})
+    assert tracked_files(git_repo.path) == ["a.py"]
+    assert [f.path for f in whole_files(git_repo.path, ["a.py", "dep"])] == ["a.py"]

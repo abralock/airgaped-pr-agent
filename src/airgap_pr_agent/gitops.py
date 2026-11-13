@@ -53,15 +53,27 @@ def merge_base(repo: Path, a: str, b: str) -> str:
     return _git(repo, "merge-base", a, b).decode().strip()
 
 
+_GITLINK = "160000"  # a submodule: the tree holds a commit id, not file content
+
+
 def tracked_files(repo: Path) -> list[str]:
-    out = _git(repo, "ls-files", "-z").decode("utf-8", "replace")
-    return [p for p in out.split("\0") if p]
+    """Tracked paths, without submodules."""
+    out = _git(repo, "ls-files", "--stage", "-z").decode("utf-8", "replace")
+    paths = []
+    for rec in out.split("\0"):
+        meta, sep, path = rec.partition("\t")
+        if sep and meta.split(" ", 1)[0] != _GITLINK:
+            paths.append(path)
+    return paths
 
 
 def whole_files(repo: Path, paths: list[str]) -> list[ChangedFile]:
     result = []
     for p in paths:
-        data = (repo / p).read_bytes()
+        target = repo / p
+        if not target.is_file():  # e.g. a submodule checkout directory
+            continue
+        data = target.read_bytes()
         if b"\0" in data:
             continue
         source = decode(data)
@@ -94,6 +106,31 @@ def _numstat(repo: Path, refs: DiffRefs) -> list[tuple[str, str | None, bool]]:
     return entries
 
 
+def _gitlinks(repo: Path, refs: DiffRefs) -> set[str]:
+    """New-side paths of changed entries that are submodules (mode 160000)."""
+    out = _git(
+        repo, "diff", "--raw", "-z", "--find-renames", "--diff-filter=AMR",
+        refs.base, refs.head,
+    ).decode("utf-8", "replace")
+    parts = out.split("\0")
+    links: set[str] = set()
+    i = 0
+    while i < len(parts):
+        meta = parts[i]
+        i += 1
+        if not meta.startswith(":"):
+            continue
+        fields = meta[1:].split(" ")
+        if len(fields) < 5:
+            continue
+        n_paths = 2 if fields[4][:1] in ("R", "C") else 1
+        path = parts[i + n_paths - 1] if i + n_paths - 1 < len(parts) else ""
+        i += n_paths
+        if fields[1] == _GITLINK:
+            links.add(path)
+    return links
+
+
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -118,9 +155,10 @@ def changed_files(repo: Path, refs: DiffRefs) -> list[ChangedFile]:
     if len(hunks) != len(entries):
         raise GitError("diff and numstat disagree on changed files")
 
+    gitlinks = _gitlinks(repo, refs)
     result = []
     for (path, old, is_binary), lines in zip(entries, hunks):
-        if is_binary:
+        if is_binary or path in gitlinks:
             continue
         source = read_at(repo, refs.head, path)
         text = source.splitlines()

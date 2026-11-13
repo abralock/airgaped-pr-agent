@@ -115,3 +115,15 @@ def test_secret_inside_non_english_comment_masked_in_all_reports(git_repo, tmp_c
         assert secret not in f.read_text(), f.name
     captured = capsys.readouterr()
     assert secret not in captured.out + captured.err
+
+
+@pytest.mark.requires_gitleaks
+def test_scan_with_submodule_succeeds(git_repo, tmp_cfg, tmp_path):
+    from test_gitops import _submodule
+
+    git_repo.commit({"a.py": "x = 1\n"})
+    _submodule(git_repo)
+    git_repo.commit({})
+    out = tmp_path / "out"
+    assert _scan(git_repo, tmp_cfg, out) == 0
+    assert (out / "report.json").is_file()
