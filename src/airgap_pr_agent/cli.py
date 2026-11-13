@@ -9,6 +9,7 @@ from .checks.secrets import SecretScanError
 from .config import ConfigError, load_config
 from .gitops import DiffRefs, GitError
 from .platforms.base import LogOnlyPlatform, Platform
+from .platforms.gitlab import GitLabPlatform, refs_from_env
 from .review import run_review
 
 
@@ -28,7 +29,25 @@ def _platform(args: argparse.Namespace) -> Platform:
         if not args.base:
             raise ConfigError("--base is required with --platform local")
         return LogOnlyPlatform(DiffRefs(args.base, args.head or "HEAD"))
-    raise ConfigError(f"platform {args.platform!r} is not available yet")
+    platform = args.platform
+    if platform == "auto":
+        if os.environ.get("GITLAB_CI") == "true":
+            platform = "gitlab"
+        elif os.environ.get("TF_BUILD") == "True":
+            raise ConfigError("platform 'azure' is not available yet")
+        else:
+            raise ConfigError("cannot detect CI platform; pass --platform (or local)")
+    if platform == "gitlab":
+        gl = GitLabPlatform.from_env(os.environ)
+        if gl is not None:
+            return gl
+        print(
+            "pr-agent: warning: PR_AGENT_GITLAB_TOKEN is not set; "
+            "findings will be printed, not posted to the merge request",
+            file=sys.stderr,
+        )
+        return LogOnlyPlatform(refs_from_env(os.environ))
+    raise ConfigError(f"platform {platform!r} is not available yet")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,0 +1,19 @@
+# Include from a project's .gitlab-ci.yml. Override PR_AGENT_IMAGE with your
+# internal registry path. Set PR_AGENT_GITLAB_TOKEN as a masked CI/CD variable.
+.pr-agent:
+  image:
+    name: $PR_AGENT_IMAGE
+    entrypoint: [""]
+  variables:
+    # Full history is required: the secrets scan fails closed if the MR base
+    # commit is not present in the clone.
+    GIT_DEPTH: "0"
+    PR_AGENT_IMAGE: "registry.internal/devtools/pr-agent:1"
+
+pr-agent-review:
+  extends: .pr-agent
+  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - pr-agent review
