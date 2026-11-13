@@ -149,3 +149,13 @@ def test_reconcile_dedupes_same_fingerprint():
     p = FakePlatform(None)
     reconcile([_finding(), _finding(line=5)], [], p)
     assert len(p.posted) == 1
+
+
+def test_non_english_is_advisory_exit_0_and_posts_inline(git_repo, tmp_cfg):
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 1\n# 获取用户信息\n"})
+    p = FakePlatform(DiffRefs(base, head))
+    assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
+    [(path, line, body)] = p.posted
+    assert (path, line) == ("a.py", 2) and "Non-English" in body

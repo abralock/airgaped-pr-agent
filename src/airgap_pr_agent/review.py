@@ -5,11 +5,13 @@ from typing import Any
 
 import httpx
 
+from .checks.language import non_english_findings
 from .checks.secrets import run_gitleaks, secret_findings
 from .config import Config
 from .gitops import ChangedFile, DiffRefs, changed_files
 from .markers import SUMMARY_MARKER, parse_fp
 from .models import Check, CheckResult, Finding
+from .paths import PathFilter
 from .platforms.base import Platform, PlatformError, Thread
 from .summary import render_inline, render_summary
 
@@ -32,6 +34,9 @@ def run_checks(
             leaks, changed if refs is not None else None, cfg.secrets.allowlist
         )
         results.append(result)
+    if cfg.checks.non_english:
+        flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude, cfg.non_english.exclude)
+        results.append(non_english_findings(changed, cfg.non_english, flt))
     return results
 
 
