@@ -5,7 +5,7 @@
 #       - repository: pr-agent
 #         type: git
 #         name: devtools/pr-agent
-#   extends/jobs:
+#   jobs:
 #     - template: templates/azure/pr-agent.yml@pr-agent
 #       parameters:
 #         image: registry.internal/devtools/pr-agent:1
@@ -37,7 +37,12 @@ jobs:
   - job: pr_agent
     displayName: PR agent (${{ parameters.mode }})
     pool: ${{ parameters.pool }}
-    container: ${{ parameters.image }}
+    # The image runs as a non-root user. Azure's container-job setup needs
+    # root (it adds a user matching the agent's uid), then runs the steps as
+    # that user, so start the container as root.
+    container:
+      image: ${{ parameters.image }}
+      options: --user 0:0
     steps:
       # Full history is required: the secrets scan fails closed if the PR
       # merge base is not present in the clone.
@@ -54,13 +59,11 @@ jobs:
               - script: pr-agent scan --out-dir pr-agent-report --history
                 displayName: PR agent full scan (with history)
                 env:
-                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
                   LLM_API_KEY: $(LLM_API_KEY)
           - ${{ if ne(parameters.history, true) }}:
               - script: pr-agent scan --out-dir pr-agent-report
                 displayName: PR agent full scan
                 env:
-                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
                   LLM_API_KEY: $(LLM_API_KEY)
           - publish: pr-agent-report
             artifact: pr-agent-report

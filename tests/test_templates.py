@@ -52,8 +52,6 @@ def test_azure_template():
     assert set(params) == {"image", "pool", "mode", "history"}
     assert params["mode"]["values"] == ["review", "scan"]
     assert params["history"]["type"] == "boolean" and params["history"]["default"] is False
-    job = doc["jobs"][0]
-    assert job["container"] == "${{ parameters.image }}"
     assert any(s.get("checkout") == "self" and s.get("fetchDepth") == 0 for s in steps)
     scripts = [s for s in steps if "script" in s]
     assert {s["script"] for s in scripts} == {
@@ -62,8 +60,9 @@ def test_azure_template():
         "pr-agent scan --out-dir pr-agent-report --history",
     }
     for s in scripts:
-        assert s["env"]["SYSTEM_ACCESSTOKEN"] == "$(System.AccessToken)"
         assert s["env"]["LLM_API_KEY"] == "$(LLM_API_KEY)"
+    (review,) = [s for s in scripts if s["script"] == "pr-agent review"]
+    assert review["env"]["SYSTEM_ACCESSTOKEN"] == "$(System.AccessToken)"
 
 
 def test_azure_template_scan_publishes_report_always():
@@ -75,3 +74,21 @@ def test_azure_template_scan_publishes_report_always():
     scan_block = doc["jobs"][0]["steps"][-1]
     assert next(iter(scan_block)) == "${{ if eq(parameters.mode, 'scan') }}"
     assert not any("publish" in s for s in _flatten(doc["jobs"][0]["steps"][1:2]))
+
+
+def test_azure_template_runs_container_as_root_for_agent_setup():
+    # The image's USER is non-root; Azure's container-job setup needs root
+    # (it runs groupadd/useradd), then runs steps as the agent's own uid.
+    doc, _ = _azure_steps()
+    assert doc["jobs"][0]["container"] == {
+        "image": "${{ parameters.image }}",
+        "options": "--user 0:0",
+    }
+
+
+def test_azure_template_scan_steps_get_no_access_token():
+    _, steps = _azure_steps()
+    for s in steps:
+        if "script" in s and s["script"].startswith("pr-agent scan"):
+            assert s["env"] == {"LLM_API_KEY": "$(LLM_API_KEY)"}
+
