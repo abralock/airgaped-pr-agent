@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Iterable
@@ -22,6 +23,11 @@ from airgap_pr_agent.models import Check, CheckResult, Finding, Severity, finger
 
 _KEPT_FIELDS = ("RuleID", "Description", "File", "StartLine", "Secret", "Commit")
 _STDERR_LIMIT = 500
+_TIMEOUT_SECONDS = 600
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_ERR_LINE = re.compile(r"(^|\s)ERR(\s|$)")
+_BUNDLED_CONFIG = Path(__file__).with_name("gitleaks.toml")
+_MIN_LINE_REDACT = 8
 
 
 class SecretScanError(Exception):
@@ -35,11 +41,23 @@ def mask(secret: str) -> str:
 class Redactor:
     def __init__(self, secrets: Iterable[str]) -> None:
         # Longest first so a secret that contains another is replaced whole.
-        self._secrets = sorted({s for s in secrets if s}, key=len, reverse=True)
+        targets: dict[str, str] = {}
+        for s in secrets:
+            if not s:
+                continue
+            targets[s] = mask(s)
+            # Multi-line secrets (private keys) appear line by line in diffs/CRLF text.
+            lines = s.splitlines()
+            if len(lines) > 1:
+                for line in lines:
+                    line = line.strip("\r")
+                    if len(line) >= _MIN_LINE_REDACT:
+                        targets.setdefault(line, mask(line))
+        self._targets = sorted(targets.items(), key=lambda kv: len(kv[0]), reverse=True)
 
     def redact(self, text: str) -> str:
-        for s in self._secrets:
-            text = text.replace(s, mask(s))
+        for raw, masked in self._targets:
+            text = text.replace(raw, masked)
         return text
 
 
@@ -56,6 +74,42 @@ def _relative_posix(file: str, repo: Path) -> str:
     return Path(norm).as_posix()
 
 
+def _git_ok(repo: Path, *args: str) -> bool:
+    try:
+        r = subprocess.run(["git", *args], cwd=repo, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def _git_dir(repo: Path) -> Path:
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"], cwd=repo, capture_output=True, timeout=60
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise SecretScanError("could not run git") from None
+    if r.returncode != 0:
+        raise SecretScanError("not a git repository; cannot scan")
+    return Path(r.stdout.decode("utf-8", "replace").strip())
+
+
+def _verify_git_inputs(repo: Path, mode: str, refs: DiffRefs | None) -> None:
+    # gitleaks logs git failures but still exits 0 with an empty report; fail closed.
+    if mode in ("range", "history"):
+        _git_dir(repo)
+    if mode == "range" and refs is not None:
+        for ref in (refs.base, refs.head):
+            if ref.startswith("-") or not _git_ok(
+                repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"
+            ):
+                raise SecretScanError(f"git ref is not available in this checkout: {ref[:40]}")
+
+
+def _clean_stderr(raw: bytes) -> str:
+    return _ANSI.sub("", raw.decode("utf-8", "replace"))
+
+
 def run_gitleaks(
     repo: Path,
     mode: Literal["range", "dir", "history"],
@@ -64,10 +118,18 @@ def run_gitleaks(
 ) -> list[dict]:
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "report.json"
+        if mode == "range" and refs is None:
+            raise SecretScanError("range mode requires refs")
+        if mode in ("range", "dir", "history"):
+            _verify_git_inputs(repo, mode, refs)
+        empty_ignore = Path(tmp) / "ignore"
+        empty_ignore.mkdir()
         base = [bin]
+        # In git modes gitleaks reads <source>/.gitleaksignore from the working tree
+        # even with --gitleaks-ignore-path; scanning the git dir itself avoids that.
+        source = _git_dir(repo) if mode in ("range", "history") else repo
         if mode == "range":
-            if refs is None:
-                raise SecretScanError("range mode requires refs")
+            assert refs is not None
             base += ["git", f"--log-opts={refs.base}..{refs.head}"]
         elif mode == "dir":
             base += ["dir"]
@@ -78,15 +140,24 @@ def run_gitleaks(
         cmd = base + [
             "--no-banner", "--exit-code", "0",
             "--report-format", "json", "--report-path", str(report),
-            str(repo),
+            # Only the .pr-agent.yml allowlist may suppress findings: ignore any
+            # repo-controlled config, .gitleaksignore and inline gitleaks:allow.
+            "--config", str(_BUNDLED_CONFIG),
+            "--gitleaks-ignore-path", str(empty_ignore),
+            "--ignore-gitleaks-allow",
+            str(source),
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True)
+            proc = subprocess.run(cmd, capture_output=True, timeout=_TIMEOUT_SECONDS)
         except OSError as e:
             raise SecretScanError(f"could not run gitleaks: {e.strerror or type(e).__name__}") from None
+        except subprocess.TimeoutExpired:
+            raise SecretScanError(f"gitleaks timed out after {_TIMEOUT_SECONDS}s") from None
+        stderr = _clean_stderr(proc.stderr)
         if proc.returncode != 0:
-            stderr = proc.stderr.decode("utf-8", "replace")[-_STDERR_LIMIT:]
-            raise SecretScanError(f"gitleaks exited with {proc.returncode}: {stderr}")
+            raise SecretScanError(f"gitleaks exited with {proc.returncode}: {stderr[-_STDERR_LIMIT:]}")
+        if any(_ERR_LINE.search(line) for line in stderr.splitlines()):
+            raise SecretScanError(f"gitleaks reported errors: {stderr[-_STDERR_LIMIT:]}")
         try:
             raw = report.read_bytes()
         except OSError:
@@ -94,11 +165,11 @@ def run_gitleaks(
         finally:
             report.unlink(missing_ok=True)
     try:
-        data = json.loads(raw) if raw.strip() else []
+        if not raw.strip():
+            raise SecretScanError("gitleaks report was empty")
+        data = json.loads(raw)
     except ValueError:
         raise SecretScanError("gitleaks report was not valid JSON") from None
-    if data is None:
-        data = []
     if not isinstance(data, list) or not all(isinstance(d, dict) for d in data):
         raise SecretScanError("gitleaks report had an unexpected shape")
     leaks = []

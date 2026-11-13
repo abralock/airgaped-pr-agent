@@ -133,3 +133,100 @@ def test_real_gitleaks_dir_mode_relative_file(git_repo):
     git_repo.commit({"sub/a.py": f'aws_access_key_id = "{AWS}"\n'})
     leaks = run_gitleaks(git_repo.path, "dir", bin=os.environ.get("GITLEAKS_BIN", "gitleaks"))
     assert [l["File"] for l in leaks if l["Secret"] == AWS] == ["sub/a.py"]
+
+
+def _bin():
+    return os.environ.get("GITLEAKS_BIN", "gitleaks")
+
+
+def test_err_log_with_exit_zero_and_empty_report_raises(tmp_path):
+    fake = _fake_gitleaks(
+        tmp_path,
+        'printf "\\033[90m8:40PM\\033[0m \\033[31mERR\\033[0m [git] fatal: bad\\n" >&2\n'
+        'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && echo "[]" > "$2"; shift; done\n',
+    )
+    with pytest.raises(SecretScanError) as ei:
+        run_gitleaks(tmp_path, "dir", bin=fake)
+    assert "\x1b" not in str(ei.value)
+
+
+def test_empty_report_raises(tmp_path):
+    fake = _fake_gitleaks(
+        tmp_path, 'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && : > "$2"; shift; done\n'
+    )
+    with pytest.raises(SecretScanError):
+        run_gitleaks(tmp_path, "dir", bin=fake)
+
+
+def test_clean_fake_report_returns_empty(tmp_path):
+    fake = _fake_gitleaks(
+        tmp_path, 'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && echo "[]" > "$2"; shift; done\n'
+    )
+    assert run_gitleaks(tmp_path, "dir", bin=fake) == []
+
+
+def test_bundled_config_isolation_flags_passed(tmp_path):
+    log = tmp_path / "args.txt"
+    fake = _fake_gitleaks(
+        tmp_path,
+        f'echo "$@" > {log}\n'
+        'while [ $# -gt 0 ]; do [ "$1" = "--report-path" ] && echo "[]" > "$2"; shift; done\n',
+    )
+    run_gitleaks(tmp_path, "dir", bin=fake)
+    args = log.read_text()
+    assert "--config" in args and "gitleaks.toml" in args
+    assert "--ignore-gitleaks-allow" in args and "--gitleaks-ignore-path" in args
+
+
+def test_range_with_unknown_base_raises(git_repo):
+    head = git_repo.commit({"a.py": "x = 1\n"})
+    with pytest.raises(SecretScanError):
+        run_gitleaks(git_repo.path, "range", DiffRefs("deadbeef" * 5, head), bin="false")
+
+
+def test_range_non_repo_raises(tmp_path):
+    with pytest.raises(SecretScanError):
+        run_gitleaks(tmp_path, "range", DiffRefs("a", "b"), bin="false")
+    with pytest.raises(SecretScanError):
+        run_gitleaks(tmp_path, "history", bin="false")
+
+
+KEY_BODY = ["MIIEowIBAAKCAQEAxxxxxxxxxxxxxxxx", "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"]
+KEY = "-----BEGIN RSA PRIVATE KEY-----\n" + "\n".join(KEY_BODY) + "\n-----END RSA PRIVATE KEY-----"
+
+
+def test_redactor_multiline_secret_in_diff_and_crlf():
+    red = Redactor([KEY])
+    diff = "\n".join("+" + l for l in KEY.splitlines())
+    crlf = KEY.replace("\n", "\r\n")
+    for text in (diff, crlf, KEY):
+        out = red.redact(text)
+        assert not any(b in out for b in KEY_BODY)
+
+
+@pytest.mark.requires_gitleaks
+def test_real_gitleaks_invalid_range_raises(git_repo):
+    head = git_repo.commit({"a.py": "x = 1\n"})
+    with pytest.raises(SecretScanError):
+        run_gitleaks(git_repo.path, "range", DiffRefs("deadbeef" * 5, head), bin=_bin())
+
+
+@pytest.mark.requires_gitleaks
+def test_real_gitleaks_ignores_repo_controlled_suppression(git_repo):
+    git_repo.commit({
+        ".gitleaks.toml": '[allowlist]\npaths = [".*"]\n',
+        "a.py": f'aws_access_key_id = "{AWS}"\n',
+        "b.py": f'k = "{AWS}"  # gitleaks:allow\n',
+    })
+    leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
+    assert {l["File"] for l in leaks if l["Secret"] == AWS} == {"a.py", "b.py"}
+    head = git_repo.git("rev-parse", "HEAD")
+    (git_repo.path / ".gitleaksignore").write_text(f"{head}:a.py:aws-access-token:1\n")
+    leaks = run_gitleaks(git_repo.path, "history", bin=_bin())
+    assert any(l["Secret"] == AWS and l["File"] == "a.py" for l in leaks), leaks
+
+
+@pytest.mark.requires_gitleaks
+def test_real_gitleaks_dir_ignores_gitleaksignore(git_repo):
+    git_repo.commit({"a.py": f'aws_access_key_id = "{AWS}"\n', ".gitleaksignore": "a.py:aws-access-token:1\n"})
+    assert any(l["Secret"] == AWS for l in run_gitleaks(git_repo.path, "dir", bin=_bin()))

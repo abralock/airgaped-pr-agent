@@ -27,7 +27,7 @@ pr-agent = "airgap_pr_agent.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-airgap_pr_agent = ["defaults.yml", "templates/*.j2"]
+airgap_pr_agent = ["defaults.yml", "templates/*.j2", "checks/gitleaks.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
