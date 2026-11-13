@@ -22,21 +22,37 @@ class RequestCapReached(Exception):
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
-def extract_json(text: str) -> dict:
-    """Strip code fences and parse the outermost {...} object."""
-    fenced = _FENCE.search(text)
-    if fenced:
-        text = fenced.group(1)
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("model reply contains no JSON object")
+def _loads_dict(text: str) -> dict | None:
     try:
-        value = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"model reply is not valid JSON: {exc.msg}") from None
-    if not isinstance(value, dict):
-        raise ValueError("model reply JSON is not an object")
-    return value
+        value = json.loads(text.strip())
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def extract_json(text: str) -> dict:
+    """Parse a JSON object from a model reply.
+
+    Tries the whole text, then each fenced block, then every '{' position
+    (first JSON object that decodes wins), so surrounding prose, braces in
+    prose and fences inside string values do not break parsing.
+    """
+    found = _loads_dict(text)
+    if found is not None:
+        return found
+    for block in _FENCE.findall(text):
+        found = _loads_dict(block)
+        if found is not None:
+            return found
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            value, _ = decoder.raw_decode(text, match.start())
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return value
+    raise ValueError("model reply contains no parseable JSON object")
 
 
 class LLMClient:
@@ -123,5 +139,7 @@ class LLMClient:
                 content = resp.json()["choices"][0]["message"]["content"]
             except (ValueError, KeyError, IndexError, TypeError):
                 raise LLMUnavailable("model endpoint returned a malformed response") from None
-            return extract_json(content or "")
+            if not isinstance(content, str):
+                raise LLMUnavailable("model endpoint returned a malformed response")
+            return extract_json(content)
         raise LLMUnavailable(f"model endpoint unavailable after {self._retries + 1} attempts: {last}")

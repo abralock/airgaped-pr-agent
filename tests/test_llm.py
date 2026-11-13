@@ -162,3 +162,27 @@ def test_api_key_not_in_transport_error_message():
     with pytest.raises(LLMUnavailable) as ei:
         make(handler, retries=0).complete_json("s", "u")
     assert "k-secret" not in str(ei.value)
+
+
+def test_extract_json_fence_inside_string_value():
+    text = '```json\n{"fix": "use:\\n```py\\nx=1\\n```\\n", "n": 1}\n```'
+    assert extract_json(text)["n"] == 1
+
+
+def test_extract_json_prose_fence_before_json():
+    text = 'Example:\n```\nprint("hi")\n```\nResult: {"a": 1}'
+    assert extract_json(text) == {"a": 1}
+
+
+def test_extract_json_braces_in_surrounding_prose():
+    assert extract_json('{"a":1} (see {docs})') == {"a": 1}
+    assert extract_json('use {x} here: {"a":1}') == {"a": 1}
+
+
+@pytest.mark.parametrize("content", [None, [{"type": "text", "text": "{}"}], 5])
+def test_non_string_content_is_malformed(content):
+    def handler(req):
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    with pytest.raises(LLMUnavailable):
+        make(handler).complete_json("s", "u")
