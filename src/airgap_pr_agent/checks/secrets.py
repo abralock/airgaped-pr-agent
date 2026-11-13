@@ -119,7 +119,8 @@ def _build_mirror(repo: Path, mirror: Path, ignore_alias: str) -> None:
     """Mirror the working tree as per-file symlinks so gitleaks' source root holds
     no repo-controlled .gitleaksignore (it is aliased to a harmless name and still scanned)."""
     mirror.mkdir()
-    root = str(repo)
+    # Absolute, or a relative repo would yield symlinks that point at themselves.
+    root = os.path.abspath(repo)
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [
             d for d in dirnames

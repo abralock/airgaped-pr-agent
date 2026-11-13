@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -503,3 +504,11 @@ def test_fallback_rule_dropped_when_specific_rule_reports_same_secret():
         ("stripe-access-token", 3),
     ]
     assert RAW not in redactor.redact(RAW)
+
+
+@pytest.mark.requires_gitleaks
+def test_real_gitleaks_dir_mode_relative_repo_path(git_repo, monkeypatch):
+    git_repo.commit({"sub/a.py": f'aws_access_key_id = "{AWS}"\n'})
+    monkeypatch.chdir(git_repo.path)
+    leaks = run_gitleaks(Path("."), "dir", bin=_bin())
+    assert [l["File"] for l in leaks if l["Secret"] == AWS] == ["sub/a.py"]

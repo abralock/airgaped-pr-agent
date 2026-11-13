@@ -59,3 +59,27 @@ def test_cli_local_review_blocks_on_hardcoded_password(git_repo, capsys):
     assert "--- app.py:3" in out and "Hunt****" in out
     assert "Hunter2!prod" not in out
     assert "Merge blocked" in out
+
+
+@pytest.mark.requires_gitleaks
+def test_cli_scan_from_repo_cwd_with_default_repo(git_repo, monkeypatch, tmp_path, capsys):
+    # The shipped templates run `pr-agent scan` from the checkout with the default --repo ".".
+    git_repo.commit({"a.py": f'x = 1\ntoken = "{TOKEN}"\n'})
+    monkeypatch.chdir(git_repo.path)
+    out = tmp_path / "reports"
+    rc = main(["scan", "--out-dir", str(out)])
+    captured = capsys.readouterr()
+    assert rc == 1, captured.err
+    assert (out / "report.json").is_file() and (out / "report.html").is_file()
+    assert TOKEN not in captured.out + captured.err
+
+
+@pytest.mark.requires_gitleaks
+def test_cli_review_from_repo_cwd_with_default_repo(git_repo, monkeypatch, capsys):
+    base = _leaky(git_repo)
+    monkeypatch.chdir(git_repo.path)
+    rc = main(["review", "--platform", "local", "--base", base])
+    captured = capsys.readouterr()
+    assert rc == 1, captured.err
+    assert "Merge blocked" in captured.out
+    assert TOKEN not in captured.out + captured.err

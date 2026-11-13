@@ -55,7 +55,7 @@ def _platform(args: argparse.Namespace) -> Platform:
         )
         return LogOnlyPlatform(refs_from_env(os.environ))
     if platform == "azure":
-        repo = Path(args.repo)
+        repo = Path(args.repo).resolve()
         az = AzurePlatform.from_env(os.environ, repo)
         if az is not None:
             return az
@@ -71,7 +71,7 @@ def _platform(args: argparse.Namespace) -> Platform:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        repo = Path(args.repo)
+        repo = Path(args.repo).resolve()
         cfg = load_config(repo)
         gitleaks_bin = os.environ.get("GITLEAKS_BIN", "gitleaks")
         if args.command == "scan":
