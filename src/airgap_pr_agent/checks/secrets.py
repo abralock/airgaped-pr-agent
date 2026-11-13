@@ -120,16 +120,13 @@ def _git_dir(repo: Path) -> Path:
     return Path(r.stdout.decode("utf-8", "replace").strip())
 
 
-def _verify_git_inputs(repo: Path, mode: str, refs: DiffRefs | None) -> None:
+def _verify_refs(repo: Path, refs: DiffRefs) -> None:
     # gitleaks logs git failures but still exits 0 with an empty report; fail closed.
-    if mode in ("range", "history"):
-        _git_dir(repo)
-    if mode == "range" and refs is not None:
-        for ref in (refs.base, refs.head):
-            if ref.startswith("-") or not _git_ok(
-                repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"
-            ):
-                raise SecretScanError(f"git ref is not available in this checkout: {ref[:40]}")
+    for ref in (refs.base, refs.head):
+        if ref.startswith("-") or not _git_ok(
+            repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"
+        ):
+            raise SecretScanError(f"git ref is not available in this checkout: {ref[:40]}")
 
 
 def _clean_stderr(raw: bytes) -> str:
@@ -168,28 +165,24 @@ def run_gitleaks(
         report = Path(tmp) / "report.json"
         if mode == "range" and refs is None:
             raise SecretScanError("range mode requires refs")
-        if mode in ("range", "dir", "history"):
-            _verify_git_inputs(repo, mode, refs)
         empty_ignore = Path(tmp) / "ignore"
         empty_ignore.mkdir()
-        base = [bin]
-        # In git modes gitleaks reads <source>/.gitleaksignore from the working tree
-        # even with --gitleaks-ignore-path; scanning the git dir itself avoids that.
-        source = _git_dir(repo) if mode in ("range", "history") else repo
         ignore_alias = f"gitleaksignore-alias-{os.urandom(8).hex()}"
         if mode == "dir":
-            # gitleaks dir mode also reads <source>/.gitleaksignore; scan a mirror instead.
+            # gitleaks dir mode reads <source>/.gitleaksignore; scan a mirror instead.
             source = Path(tmp) / "mirror"
             _build_mirror(repo, source, ignore_alias)
-        if mode == "range":
-            assert refs is not None
-            base += ["git", f"--log-opts={refs.base}..{refs.head}"]
-        elif mode == "dir":
-            base += ["dir"]
-        elif mode == "history":
-            base += ["git"]
+            base = [bin, "dir"]
         else:
-            raise SecretScanError(f"unknown scan mode: {mode}")
+            # In git modes gitleaks reads <source>/.gitleaksignore from the working
+            # tree even with --gitleaks-ignore-path; scanning the git dir avoids that.
+            source = _git_dir(repo)
+            if mode == "range":
+                assert refs is not None
+                _verify_refs(repo, refs)
+                base = [bin, "git", f"--log-opts={refs.base}..{refs.head}"]
+            else:
+                base = [bin, "git"]
         cmd = base + [
             "--no-banner", "--exit-code", "0",
             "--report-format", "json", "--report-path", str(report),

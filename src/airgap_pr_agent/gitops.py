@@ -49,6 +49,11 @@ def read_at(repo: Path, rev: str, path: str) -> str:
     return decode(_git(repo, "show", f"{rev}:{path}"))
 
 
+def rev_parse(repo: Path, rev: str) -> str:
+    """The commit id that rev names; raises GitError if it does not resolve."""
+    return _git(repo, "rev-parse", "--verify", rev).decode().strip()
+
+
 def merge_base(repo: Path, a: str, b: str) -> str:
     return _git(repo, "merge-base", a, b).decode().strip()
 

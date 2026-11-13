@@ -21,7 +21,7 @@ from .summary import render_inline, render_summary
 def run_checks(
     repo: Path,
     changed: list[ChangedFile],
-    refs: DiffRefs | None,
+    refs: DiffRefs,
     cfg: Config,
     llm: Any,
     gitleaks_bin: str,
@@ -29,18 +29,13 @@ def run_checks(
     results: list[CheckResult] = []
     redactor = Redactor([])
     if cfg.checks.secrets:
-        if refs is not None:
-            leaks = run_gitleaks(repo, "range", refs, bin=gitleaks_bin)
-        else:
-            leaks = run_gitleaks(repo, "dir", bin=gitleaks_bin)
-        result, _ = secret_findings(
-            leaks, changed if refs is not None else None, cfg.secrets.allowlist
-        )
+        leaks = run_gitleaks(repo, "range", refs, bin=gitleaks_bin)
+        result, _ = secret_findings(leaks, changed, cfg.secrets.allowlist)
         results.append(result)
         # The model and the other checks see whole head files, so a secret that
         # predates this MR can sit in a context line. Mask those too; they are
         # not this MR's findings and never affect the exit code.
-        context = scan_file_contents(changed, bin=gitleaks_bin) if refs is not None else []
+        context = scan_file_contents(changed, bin=gitleaks_bin)
         redactor = Redactor(leak["Secret"] or "" for leak in leaks + context)
     if cfg.checks.non_english:
         flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude, cfg.non_english.exclude)

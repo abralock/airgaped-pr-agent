@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 
 from airgap_pr_agent.config import ConfigError
-from airgap_pr_agent.gitops import DiffRefs, GitError, _git, merge_base
+from airgap_pr_agent.gitops import DiffRefs, GitError, merge_base, rev_parse
 
 from .base import PlatformError, Thread
 
@@ -20,8 +20,8 @@ _DEFAULT_API_VERSION = "6.0"
 def refs_from_repo(repo: Path) -> DiffRefs:
     """ADO PR builds check out a merge commit: HEAD^1 is the target, HEAD^2 the source."""
     try:
-        head = _git(repo, "rev-parse", "--verify", "HEAD^2").decode().strip()
-        target = _git(repo, "rev-parse", "--verify", "HEAD^1").decode().strip()
+        head = rev_parse(repo, "HEAD^2")
+        target = rev_parse(repo, "HEAD^1")
         return DiffRefs(merge_base(repo, target, head), head)
     except GitError:
         raise ConfigError(
