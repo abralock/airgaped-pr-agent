@@ -2,11 +2,12 @@ from airgap_pr_agent.platforms.base import PlatformError, Thread
 
 
 class FakePlatform:
-    def __init__(self, refs, threads=None, inline_ok=True, fail_posts=False):
+    def __init__(self, refs, threads=None, inline_ok=True, fail_posts=False, fail_inline=0):
         self.refs = refs
         self.threads = list(threads or [])
         self.inline_ok = inline_ok
         self.fail_posts = fail_posts
+        self.fail_inline = fail_inline  # reject this many inline posts first
         self.posted: list[tuple[str, int, str]] = []
         self.resolved: list[tuple[str, bool]] = []
         self.summaries: list[str] = []
@@ -27,6 +28,9 @@ class FakePlatform:
 
     def post_inline(self, path, line, body):
         self._maybe_fail()
+        if self.fail_inline:
+            self.fail_inline -= 1
+            raise PlatformError("GitLab POST returned HTTP 400")
         self.posted.append((path, line, body))
 
     def set_resolved(self, thread_id, resolved):

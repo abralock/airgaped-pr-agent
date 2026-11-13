@@ -247,3 +247,81 @@ def test_mr_adding_submodule_reviews_cleanly(git_repo, tmp_cfg):
     p = FakePlatform(DiffRefs(base, head))
     assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
     assert "✅ No issues found." in p.summaries[-1]
+
+
+def test_rejected_inline_post_still_posts_others_and_summary(git_repo, tmp_cfg, capsys):
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "# 获取用户信息\nx = 1\n# 删除用户信息\n"})
+    p = FakePlatform(DiffRefs(base, head), fail_inline=1)
+    assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
+    assert [line for _, line, _ in p.posted] == [3]
+    assert len(p.summaries) == 1
+    assert "could not post" in capsys.readouterr().out
+
+
+def test_failed_resolve_does_not_stop_summary(git_repo, tmp_cfg):
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 2\n"})
+
+    class ResolveFails(FakePlatform):
+        def set_resolved(self, thread_id, resolved):
+            raise RuntimeError("unexpected")
+
+    threads = [Thread("t1", fp_marker("dead"), False), Thread("t2", fp_marker("gone"), False)]
+    p = ResolveFails(DiffRefs(base, head), threads=threads)
+    assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
+    assert len(p.summaries) == 1
+
+
+def _gitlab_html_2xx():
+    import httpx
+
+    from airgap_pr_agent.platforms.gitlab import GitLabPlatform
+
+    def handler(request):  # a proxy answering every API call with an HTML page
+        return httpx.Response(200, text="<html>login</html>")
+
+    return lambda refs: GitLabPlatform(
+        "https://gl.example/api/v4", "7", "3", "tok", refs,
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.requires_gitleaks
+@pytest.mark.parametrize("leaky", [False, True])
+def test_non_json_2xx_from_platform_keeps_exit_code(git_repo, tmp_cfg, capsys, leaky):
+    if leaky:
+        base, head = _leaky(git_repo)
+    else:
+        base = git_repo.commit({"a.py": "x = 1\n"})
+        head = git_repo.commit({"a.py": "x = 2\n"})
+    platform = _gitlab_html_2xx()(DiffRefs(base, head))
+    assert run_review(git_repo.path, platform, tmp_cfg, None, GITLEAKS) == (1 if leaky else 0)
+    out = capsys.readouterr().out
+    assert "could not post" in out and TOKEN not in out
+
+
+def test_malformed_versions_still_posts_summary(git_repo, tmp_cfg):
+    import httpx
+
+    from airgap_pr_agent.platforms.gitlab import GitLabPlatform
+
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 2\n"})
+    posted = []
+
+    def handler(request):
+        if request.url.path.endswith("/versions"):
+            return httpx.Response(200, json=[{}])  # no head_commit_sha: KeyError
+        if request.url.path.endswith("/discussions"):
+            return httpx.Response(200, json=[])
+        posted.append(request.url.path)
+        return httpx.Response(201, json={})
+
+    platform = GitLabPlatform("https://gl.example/api/v4", "7", "3", "tok",
+                              DiffRefs(base, head), transport=httpx.MockTransport(handler))
+    assert run_review(git_repo.path, platform, tmp_cfg, None, GITLEAKS) == 0
+    assert posted == ["/api/v4/projects/7/merge_requests/3/notes"]

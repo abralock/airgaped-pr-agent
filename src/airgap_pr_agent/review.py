@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-import httpx
 
 from .checks.language import non_english_findings
 from .checks.secrets import (
@@ -15,7 +14,7 @@ from .gitops import ChangedFile, DiffRefs, changed_files
 from .markers import SUMMARY_MARKER, parse_fp
 from .models import Check, CheckResult, Finding
 from .paths import PathFilter
-from .platforms.base import Platform, PlatformError, Thread
+from .platforms.base import Platform, Thread
 from .summary import render_inline, render_summary
 
 
@@ -55,7 +54,17 @@ def run_checks(
     return results
 
 
-def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform) -> None:
+def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform) -> list[str]:
+    """Sync bot threads with the findings. Returns the names of the calls that failed:
+    one rejected comment (for example on a collapsed diff) must not stop the rest."""
+    failures: list[str] = []
+
+    def attempt(call: Callable[[], None]) -> None:
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001 - any platform failure is non-fatal
+            failures.append(type(exc).__name__)
+
     current = {f.fingerprint for f in findings if f.line is not None}
     existing: set[str] = set()
     for t in threads:
@@ -66,15 +75,16 @@ def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform
             continue
         existing.add(fp)
         if t.resolved and fp in current:
-            platform.set_resolved(t.id, False)
+            attempt(lambda t=t: platform.set_resolved(t.id, False))
         elif not t.resolved and fp not in current:
-            platform.set_resolved(t.id, True)
+            attempt(lambda t=t: platform.set_resolved(t.id, True))
     posted: set[str] = set()
     for f in findings:
         if f.line is None or f.fingerprint in existing or f.fingerprint in posted:
             continue
         posted.add(f.fingerprint)
-        platform.post_inline(f.path, f.line, render_inline(f))
+        attempt(lambda f=f: platform.post_inline(f.path, f.line, render_inline(f)))
+    return failures
 
 
 def run_review(
@@ -85,14 +95,31 @@ def run_review(
     results = run_checks(repo, changed, refs, cfg, llm, gitleaks_bin)
     findings = [f for r in results for f in r.findings]
     blocked = any(f.check is Check.SECRETS for f in findings)
+    # The exit code is decided above. Posting is best effort, and each seam is
+    # isolated so that a failure in one still lets the summary through.
+    failures: list[str] = []
+    threads: list[Thread] | None = None
     try:
         threads = platform.list_threads()
-        if platform.can_post_inline():
-            reconcile(findings, threads, platform)
-        existing = next((t for t in threads if SUMMARY_MARKER in t.body), None)
-        platform.upsert_summary(render_summary(results, blocked), existing)
-    except (httpx.HTTPError, PlatformError) as exc:
-        print(f"pr-agent: could not post review comments: {type(exc).__name__}")
+    except Exception as exc:  # noqa: BLE001 - includes non-JSON 2xx replies
+        failures.append(type(exc).__name__)
+    if threads is not None:
+        try:
+            inline = platform.can_post_inline()
+        except Exception as exc:  # noqa: BLE001
+            failures.append(type(exc).__name__)
+            inline = False
+        if inline:
+            failures += reconcile(findings, threads, platform)
+        # Without the thread list the existing summary is unknown; posting a
+        # new one would break the one-summary-per-MR rule.
+        try:
+            existing = next((t for t in threads if SUMMARY_MARKER in t.body), None)
+            platform.upsert_summary(render_summary(results, blocked), existing)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(type(exc).__name__)
+    if failures:
+        print(f"pr-agent: could not post review comments: {', '.join(sorted(set(failures)))}")
         for f in findings:
             print(f"{f.path}:{f.line if f.line is not None else '-'}: {f.title}")
     return 1 if blocked else 0
