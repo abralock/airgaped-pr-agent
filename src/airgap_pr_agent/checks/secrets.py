@@ -28,6 +28,9 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _ERR_LINE = re.compile(r"(^|\s)ERR(\s|$)")
 _BUNDLED_CONFIG = Path(__file__).with_name("gitleaks.toml")
 _MIN_LINE_REDACT = 8
+# Broad rules from the bundled gitleaks.toml. When a specific upstream rule
+# reports the same secret on the same line, the broad finding is a duplicate.
+_FALLBACK_RULES = frozenset({"hardcoded-password", "connection-string-credentials"})
 
 
 class SecretScanError(Exception):
@@ -229,6 +232,10 @@ def _allowed(allowlist: list[AllowEntry], fp: str, path: str) -> bool:
     return False
 
 
+def _leak_key(leak: dict) -> tuple:
+    return (leak["File"], leak.get("StartLine"), leak.get("Commit"), leak["Secret"])
+
+
 def secret_findings(
     leaks: list[dict],
     changed: list[ChangedFile] | None,
@@ -237,9 +244,12 @@ def secret_findings(
     by_path = {c.path: c for c in changed} if changed is not None else None
     best: dict[str, Finding] = {}
     secrets: list[str] = []
+    specific = {_leak_key(l) for l in leaks if l["RuleID"] not in _FALLBACK_RULES}
     for leak in leaks:
         secret = leak["Secret"] or ""
         secrets.append(secret)
+        if leak["RuleID"] in _FALLBACK_RULES and _leak_key(leak) in specific:
+            continue
         path, rule = leak["File"], leak["RuleID"]
         fp = fingerprint("secrets", rule, path, hashlib.sha256(secret.encode("utf-8")).hexdigest())
         if _allowed(allowlist, fp, path):

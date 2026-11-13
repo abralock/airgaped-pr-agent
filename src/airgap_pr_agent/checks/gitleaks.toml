@@ -1,2 +1,52 @@
+# Bundled gitleaks config: the upstream default rules plus rules for hardcoded
+# passwords and credentialed connection strings, which the defaults miss when
+# the value is short or contains punctuation (e.g. password = "Hunter2!prod").
+
 [extend]
 useDefault = true
+
+[[rules]]
+id = "hardcoded-password"
+description = "Hardcoded password or secret assigned to a credential-named key"
+# A credential-named key (dbPassword, client_secret, "api_key", PWD, ...), an
+# assignment operator (= : := =>), then a quoted literal of 6+ characters.
+# Short keys (pwd, pass) must start the identifier or follow a separator so
+# that words like "compass" or "bypass" don't match.
+regex = '''(?i)(?:[\w.-]*(?:password|passwd|secret|api[_-]?key|token)|(?:^|[^a-z0-9])(?:[\w.-]*[_.-])?(?:pwd|pass))[\w.-]{0,20}["']?\]?[ \t]{0,5}(?::=|=>|=|:)[ \t]{0,5}["']([^"'\s]{6,200})["']'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["password", "passwd", "pwd", "pass", "secret", "api_key", "api-key", "apikey", "token"]
+
+[[rules.allowlists]]
+description = "Placeholders, templates and environment lookups"
+regexTarget = "secret"
+regexes = [
+  '''(?i)change[_-]?me|placeholder|example|dummy|redacted|xxx|\*\*\*''',
+  '''(?i)^(?:password|passwd|secret|test|testing|none|null|undefined|empty|todo|tbd)$''',
+  '''\$\{[^}]*\}''',
+  '''\{\{[^}]*\}\}''',
+  '''^<[^>]*>$''',
+  '''%\([^)]*\)s''',
+  '''^\$\(?[A-Za-z_][A-Za-z0-9_.]*\)?$''',
+  '''(?i)^(?:process\.env|os\.environ|getenv|env\[)''',
+]
+
+[[rules]]
+id = "connection-string-credentials"
+description = "Connection string or URL with an embedded password"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqps?|mssql|sqlserver|https?|ftps?|jdbc:[a-z0-9]+)://[^:@/\s"']+:([^@/\s"']{4,200})@[^\s"'/]+'''
+secretGroup = 1
+keywords = ["://"]
+
+[[rules.allowlists]]
+description = "Placeholders, templates and environment lookups"
+regexTarget = "secret"
+regexes = [
+  '''(?i)change[_-]?me|placeholder|example|dummy|redacted|xxx|\*\*\*''',
+  '''(?i)^(?:password|passwd|pass|pwd|secret|test|testing|none|null|undefined|empty|todo|tbd)$''',
+  '''\$\{[^}]*\}''',
+  '''\{\{[^}]*\}\}''',
+  '''^<[^>]*>$''',
+  '''%\([^)]*\)s''',
+  '''^\$\(?[A-Za-z_][A-Za-z0-9_.]*\)?$''',
+]

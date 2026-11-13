@@ -256,3 +256,81 @@ def test_real_gitleaks_dir_scans_gitleaksignore_itself_and_skips_dot_git(git_rep
     git_repo.commit({".gitleaksignore": f'# {AWS}\n', "a.py": "x = 1\n"})
     leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
     assert [l["File"] for l in leaks if l["Secret"] == AWS] == [".gitleaksignore"]
+
+
+# --- bundled rules: hardcoded passwords and credentialed connection strings ---
+
+PASSWORD_POSITIVES = {
+    "app.py": ('password = "Hunter2!prod"\n', "Hunter2!prod"),
+    "Db.java": ('String dbPassword = "Hunter2!prod";\n', "Hunter2!prod"),
+    "conf.json": ('{"password": "Sup3r$ecret99"}\n', "Sup3r$ecret99"),
+    "db.env": ("DATABASE_URL=postgres://app:S3cretPass@db:5432/x\n", "S3cretPass"),
+}
+
+PASSWORD_NEGATIVES = (
+    'password = os.environ["DB_PASSWORD"]\n'
+    'password = "changeme"\n'
+    'password = ""\n'
+    'password = "${DB_PASSWORD}"\n'
+    'password = "{{ db_password }}"\n'
+    'password = "<your-password>"\n'
+    'password = "$DB_PASSWORD"\n'
+    'password = "xxxxxxxx"\n'
+    'compass_heading = "north-northwest-x"\n'
+    'url = "postgres://user:password@localhost/db"\n'
+    'url = "postgres://user:${PGPASS}@db/x"\n'
+)
+
+
+def _secrets_by_file(leaks):
+    out = {}
+    for leak in leaks:
+        out.setdefault(leak["File"], set()).add(leak["Secret"])
+    return out
+
+
+@pytest.mark.requires_gitleaks
+def test_bundled_rules_catch_passwords_and_connection_strings_range(git_repo):
+    base = git_repo.commit({"README": "x\n"})
+    head = git_repo.commit({name: body for name, (body, _) in PASSWORD_POSITIVES.items()})
+    found = _secrets_by_file(run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin()))
+    for name, (_, secret) in PASSWORD_POSITIVES.items():
+        assert secret in found.get(name, set()), name
+
+
+@pytest.mark.requires_gitleaks
+def test_bundled_rules_catch_passwords_and_connection_strings_dir(git_repo):
+    git_repo.commit({name: body for name, (body, _) in PASSWORD_POSITIVES.items()})
+    found = _secrets_by_file(run_gitleaks(git_repo.path, "dir", bin=_bin()))
+    for name, (_, secret) in PASSWORD_POSITIVES.items():
+        assert secret in found.get(name, set()), name
+
+
+@pytest.mark.requires_gitleaks
+def test_bundled_rules_ignore_placeholders_and_env_lookups(git_repo):
+    base = git_repo.commit({"README": "x\n"})
+    head = git_repo.commit({"settings.py": PASSWORD_NEGATIVES})
+    assert run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin()) == []
+    assert run_gitleaks(git_repo.path, "dir", bin=_bin()) == []
+
+
+@pytest.mark.requires_gitleaks
+def test_specific_rule_wins_over_password_rule_on_same_secret(git_repo):
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": f'x = 1\ntoken = "{AWS}"\n'})
+    leaks = run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin())
+    changed = [ChangedFile("a.py", None, {2: f'token = "{AWS}"'}, "")]
+    result, _ = secret_findings(leaks, changed, [])
+    assert [(f.rule, f.line) for f in result.findings] == [("aws-access-token", 2)]
+
+
+def test_fallback_rule_dropped_when_specific_rule_reports_same_secret():
+    specific = {**LEAK, "RuleID": "stripe-access-token"}
+    fallback = {**LEAK, "RuleID": "hardcoded-password"}
+    other_line = {**LEAK, "RuleID": "hardcoded-password", "StartLine": 9}
+    result, redactor = secret_findings([fallback, specific, other_line], None, [])
+    assert sorted((f.rule, f.line) for f in result.findings) == [
+        ("hardcoded-password", 9),
+        ("stripe-access-token", 3),
+    ]
+    assert RAW not in redactor.redact(RAW)

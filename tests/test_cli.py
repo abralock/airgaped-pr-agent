@@ -46,3 +46,16 @@ def test_cli_local_requires_base(git_repo, capsys):
 def test_python_dash_m_runs():
     r = subprocess.run([sys.executable, "-m", "airgap_pr_agent", "--help"], capture_output=True)
     assert r.returncode == 0
+
+
+@pytest.mark.requires_gitleaks
+def test_cli_local_review_blocks_on_hardcoded_password(git_repo, capsys):
+    # The spec's acceptance example: the default gitleaks rules alone miss it.
+    base = git_repo.commit({"app.py": "x = 1\n"})
+    git_repo.commit({"app.py": 'x = 1\n// 获取用户信息\npassword = "Hunter2!prod"\n'})
+    rc = main(["review", "--platform", "local", "--repo", str(git_repo.path), "--base", base])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "--- app.py:3" in out and "Hunt****" in out
+    assert "Hunter2!prod" not in out
+    assert "Merge blocked" in out
