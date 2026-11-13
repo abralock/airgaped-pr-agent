@@ -56,3 +56,31 @@ def test_gb18030_file_flagged_end_to_end(git_repo):
     head = git_repo.commit({"a.c": "int x;\n// 获取用户信息\n".encode("gb18030")})
     res = non_english_findings(changed_files(git_repo.path, DiffRefs(base, head)), CFG, FILTER)
     assert [f.line for f in res.findings] == [2]
+
+
+@pytest.mark.parametrize("text", [
+    "Invalid argument passed to the parser function", "TODO fix this later when we refactor",
+    "Returns None if the cache entry has expired", "Retry the request with exponential backoff",
+    "Make sure the user is authenticated first", "Convert the timestamp to UTC before saving",
+    "This is a workaround for the upstream bug", "Do not call this from the main thread"])
+def test_technical_english_not_flagged(text):
+    assert classify(text, 4, 0.7) is None
+
+
+@pytest.mark.parametrize("text,lang", [
+    ("Ceci est un test de la fonction", "French"),
+    ("Dies ist ein Test für die Funktion", "German")])
+def test_other_latin_languages_flagged(text, lang):
+    assert lang in classify(text, 4, 0.7)
+
+
+@pytest.mark.parametrize("text", [
+    "π", "Ω", "α β γ", "Δt in seconds", "µs", "Temperature in °C and latency in µs measured",
+    "Set value to π over two radians here"])
+def test_math_and_unit_symbols_allowed(text):
+    assert classify(text, 4, 0.7) is None
+
+
+def test_real_greek_and_cjk_flagged():
+    assert "Greek" in classify("Καλημέρα κόσμε", 4, 0.7)
+    assert "non-Latin" in classify("获取", 4, 0.7)

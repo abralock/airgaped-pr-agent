@@ -84,6 +84,7 @@ _PATH = re.compile(r"(?:[\w.~-]*/)+[\w.-]*")
 _PRINTF = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[a-zA-Z%]|%\([^)]*\)[a-zA-Z]")
 _BRACES = re.compile(r"\$?\{[^{}]*\}")
 _ESCAPE = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.S)
+_GREEK_WORD = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]{4,}")
 _WORD = re.compile(r"[^\W\d_]+")
 
 
@@ -95,7 +96,14 @@ def _clean(text: str) -> str:
 
 @cache
 def _detector():
-    return LanguageDetectorBuilder.from_all_languages().with_low_accuracy_mode().build()
+    # Fixed Latin-free-of-"Latin" candidate set: the generic Latin model
+    # misclassifies short technical English, so it is excluded.
+    L = Language
+    return LanguageDetectorBuilder.from_languages(
+        L.ENGLISH, L.SPANISH, L.FRENCH, L.GERMAN, L.PORTUGUESE, L.ITALIAN, L.DUTCH,
+        L.INDONESIAN, L.MALAY, L.VIETNAMESE, L.TURKISH, L.POLISH, L.TAGALOG,
+        L.SWEDISH, L.ROMANIAN, L.CZECH,
+    ).build()
 
 
 def _script(ch: str) -> str:
@@ -105,9 +113,16 @@ def _script(ch: str) -> str:
 
 def classify(text: str, min_words: int, min_confidence: float, latin_check: bool = True) -> str | None:
     text = _clean(text)
+    if _GREEK_WORD.search(text):
+        return "non-Latin script (Greek)"
     for ch in text:
+        if ch == "\u00b5":  # MICRO SIGN (units such as µs) is always allowed
+            continue
         if ch.isalpha() and not unicodedata.name(ch, "").startswith("LATIN"):
-            return f"non-Latin script ({_script(ch)})"
+            script = _script(ch)
+            if script == "Greek":  # isolated Greek letters are math/units notation
+                continue
+            return f"non-Latin script ({script})"
     if not latin_check or len(_WORD.findall(text)) < min_words:
         return None
     values = _detector().compute_language_confidence_values(text)
