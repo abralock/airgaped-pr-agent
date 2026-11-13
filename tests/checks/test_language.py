@@ -68,7 +68,7 @@ def test_technical_english_not_flagged(text):
 
 
 @pytest.mark.parametrize("text,lang", [
-    ("Ceci est un test de la fonction", "French"),
+    ("Ceci est un test de la fonction principale du système", "French"),
     ("Dies ist ein Test für die Funktion", "German")])
 def test_other_latin_languages_flagged(text, lang):
     assert lang in classify(text, 4, 0.7)
