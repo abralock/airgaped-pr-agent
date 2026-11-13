@@ -53,3 +53,13 @@ def git_repo(tmp_path):
     repo.git("config", "user.email", "test@example.com")
     repo.git("config", "commit.gpgsign", "false")
     return repo
+
+
+GITLEAKS = os.environ.get("GITLEAKS_BIN", "gitleaks")
+
+
+@pytest.fixture
+def tmp_cfg(tmp_path):
+    from airgap_pr_agent.config import load_config
+
+    return load_config(tmp_path)
