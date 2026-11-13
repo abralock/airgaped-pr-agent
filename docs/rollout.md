@@ -192,6 +192,8 @@ branch, for example weekly. The scan exits 1 when it finds secrets, so the
 scheduled pipeline shows as failed. Set `full_scan.fail_on_secrets: false` in
 `.pr-agent.yml` if you'd rather it report without failing.
 
+The scan writes `pr-agent-report/` into the checkout as uid 10001, so that uid must be able to write there. The Docker executor's default checkout (`umask 0000`) allows it. If your runner sets `FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR`, check that the scan job can still write its reports.
+
 ### Forks
 
 MR pipelines from forks run in the fork's project, with the fork's CI/CD

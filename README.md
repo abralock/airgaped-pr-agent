@@ -9,7 +9,7 @@ It runs three checks on the changed lines:
 
 | Check | How | Blocks the merge? |
 | --- | --- | --- |
-| Secrets | [gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 with bundled rules. Deterministic: the model never sees a secret, and secrets are always masked (`AKIA****`). | **Yes** |
+| Secrets | [gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 with bundled rules. Deterministic: the model never judges a secret. Every secret gitleaks finds, whether added by the MR or already in a changed file, is masked (`AKIA****`) in comments, logs, reports and model prompts. | **Yes** |
 | Non-English text | Comments and string literals, using an offline language detector. | No, advisory |
 | Security review | An OpenAI-compatible model on your network (`LLM_BASE_URL`). If the model is down or not configured, the check is skipped and the summary says so. | No, advisory |
 
