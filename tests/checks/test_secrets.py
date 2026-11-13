@@ -528,3 +528,18 @@ def test_redact_findings_masks_non_secret_text_only():
     [f] = results[1].findings
     assert RAW not in f.title + f.message + f.suggestion and "Hunt****" in f.message
     assert results[0].findings == before and results[2].findings == [plain]
+
+
+@pytest.mark.requires_gitleaks
+@pytest.mark.parametrize("attr", ["*.py -diff", "*.py binary"])
+@pytest.mark.parametrize("attr_tree", [False, True])
+def test_real_gitleaks_gitattributes_cannot_hide_secret_in_range(git_repo, attr, attr_tree):
+    # A repo-controlled .gitattributes turns the diff into "Binary files differ".
+    # attr.tree=HEAD (git >= 2.42) makes git honour the committed file even when
+    # gitleaks runs it from the git dir.
+    if attr_tree:
+        git_repo.git("config", "attr.tree", "HEAD")
+    base = git_repo.commit({".gitattributes": attr + "\n", "a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": f'aws_access_key_id = "{AWS}"\n'})
+    leaks = run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin())
+    assert any(l["Secret"] == AWS for l in leaks)

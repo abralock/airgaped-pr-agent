@@ -180,7 +180,9 @@ def run_gitleaks(
             if mode == "range":
                 assert refs is not None
                 _verify_refs(repo, refs)
-                base = [bin, "git", f"--log-opts={refs.base}..{refs.head}"]
+                # --text: a .gitattributes in the MR (-diff, binary) must not turn
+                # a file's diff into "Binary files differ" and hide its secrets.
+                base = [bin, "git", f"--log-opts=--text {refs.base}..{refs.head}"]
             else:
                 base = [bin, "git"]
         cmd = base + [
