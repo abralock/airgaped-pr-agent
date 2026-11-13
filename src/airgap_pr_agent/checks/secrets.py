@@ -30,7 +30,9 @@ _BUNDLED_CONFIG = Path(__file__).with_name("gitleaks.toml")
 _MIN_LINE_REDACT = 8
 # Broad rules from the bundled gitleaks.toml. When a specific upstream rule
 # reports the same secret on the same line, the broad finding is a duplicate.
-_FALLBACK_RULES = frozenset({"hardcoded-password", "connection-string-credentials"})
+_FALLBACK_RULES = frozenset(
+    {"hardcoded-password", "hardcoded-password-unquoted", "connection-string-credentials"}
+)
 
 
 class SecretScanError(Exception):

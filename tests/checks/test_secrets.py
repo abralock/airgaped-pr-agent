@@ -22,6 +22,8 @@ CF = ChangedFile("app.py", None, {3: f'password = "{RAW}"'}, f'a\nb\npassword = 
 
 # A token real gitleaks flags (the brief's AKIA2E0A... literal is not detected).
 AWS = "AKIAQYLPMN5HHHFPZAM2"
+# Mixed case, so it also matches the bundled hardcoded-password rule.
+STRIPE = "sk_live_51HqLyjWDarjtT1zdp7dcXYZabc123"
 
 
 def test_mask():
@@ -260,26 +262,83 @@ def test_real_gitleaks_dir_scans_gitleaksignore_itself_and_skips_dot_git(git_rep
 
 # --- bundled rules: hardcoded passwords and credentialed connection strings ---
 
-PASSWORD_POSITIVES = {
-    "app.py": ('password = "Hunter2!prod"\n', "Hunter2!prod"),
-    "Db.java": ('String dbPassword = "Hunter2!prod";\n', "Hunter2!prod"),
-    "conf.json": ('{"password": "Sup3r$ecret99"}\n', "Sup3r$ecret99"),
-    "db.env": ("DATABASE_URL=postgres://app:S3cretPass@db:5432/x\n", "S3cretPass"),
-}
+# (file, content, expected secret): each must be reported.
+PASSWORD_POSITIVES = [
+    ("app.py", 'password = "Hunter2!prod"\n', "Hunter2!prod"),
+    ("Db.java", 'String dbPassword = "Hunter2!prod";\n', "Hunter2!prod"),
+    ("conf.json", '{"password": "Sup3r$ecret99"}\n', "Sup3r$ecret99"),
+    ("client.go", 'client_secret := "q8F!z2Lm#9pR"\n', "q8F!z2Lm#9pR"),
+    ("settings.py", "DB_PASS = 'Tr0ub4dor&3x'\n", "Tr0ub4dor&3x"),
+    ("dollar.py", 'password = "$uperS3cret9"\n', "$uperS3cret9"),
+    ("xxx.py", 'password = "Xxx9!kLmPq2"\n', "Xxx9!kLmPq2"),
+    ("cache.py", 'CACHE = "redis://:S3cretPass@cache:6379"\n', "S3cretPass"),
+    ("db.py", 'URL = "postgres://app:S3cretPass@db:5432/x"\n', "S3cretPass"),
+    (".env", "DB_PASSWORD=Hunter2!prod\n", "Hunter2!prod"),
+    ("values.yaml", "db:\n  password: Hunter2!prod\n", "Hunter2!prod"),
+]
 
-PASSWORD_NEGATIVES = (
-    'password = os.environ["DB_PASSWORD"]\n'
-    'password = "changeme"\n'
-    'password = ""\n'
-    'password = "${DB_PASSWORD}"\n'
-    'password = "{{ db_password }}"\n'
-    'password = "<your-password>"\n'
-    'password = "$DB_PASSWORD"\n'
-    'password = "xxxxxxxx"\n'
-    'compass_heading = "north-northwest-x"\n'
-    'url = "postgres://user:password@localhost/db"\n'
-    'url = "postgres://user:${PGPASS}@db/x"\n'
-)
+# Must not be reported. The placeholders have enough entropy to pass the
+# rules' entropy floor, so they exercise the allowlists, not the entropy check.
+PASSWORD_NEGATIVES = {
+    "neg.py": (
+        'password = os.environ["DB_PASSWORD"]\n'
+        'password = "changeme-Prod1"\n'
+        'password = "<your-password>"\n'
+        'password = "%(db_password)s"\n'
+        'password = "$(DbPassword)"\n'
+        'password = "${DB_PASSWORD_9}"\n'
+        'password = "PLACEHOLDER-xyz9"\n'
+        'password = "dummy-Pass-1"\n'
+        'password = "REDACTED-Q9z"\n'
+        'password = "{{ db_password }}"\n'
+        'password = "$DB_PASSWORD"\n'
+        'password = "xxxxxxxx"\n'
+        'password = ""\n'
+        'secret_name = "db-credentials"\n'
+        'api_key_env = "OPENAI_API_KEY"\n'
+        'api_key_env_var = "LLM_API_KEY"\n'
+        'SECRET_KEY_NAME = "DJANGO_SECRET_KEY"\n'
+        'tokenizer = "bert-base-uncased"\n'
+        'tokenizer_name = "bert-base-uncased"\n'
+        'token_endpoint = "/oauth/token"\n'
+        'token_url = "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"\n'
+        'password_reset_url = "/accounts/password/reset/"\n'
+        'csrf_token_name = "csrftoken"\n'
+        'password_hash_algo = "pbkdf2_sha256"\n'
+        'password_hasher = "argon2id-v19"\n'
+        'secretsmanager_arn_prefix = "arn:aws:secretsmanager"\n'
+        'passage = "Lorem-ipsum-dolor"\n'
+        'compass_heading = "north-northwest-x"\n'
+        '_PassArg.eval_context: "context.eval_ctx"\n'
+        'a = "postgres://postgres:postgres@localhost:5432/test"\n'
+        'b = "mysql://root:root@localhost/db"\n'
+        'c = "amqp://guest:guest@rabbitmq:5672/"\n'
+        'd = "postgres://user:password@localhost/db"\n'
+        'e = "postgres://user:${PGPASS}@db/x"\n'
+        'f = "postgres://app:Pr0dPassw0rd@127.0.0.1:5432/x"\n'
+    ),
+    "i18n.json": (
+        '{"password_label": "Mot-de-passe",\n'
+        ' "passwordPlaceholder": "Enter-password",\n'
+        ' "forgotPassword": "Forgot-password?",\n'
+        ' "token_expired": "Session-expired"}\n'
+    ),
+    "deploy.yaml": (
+        "env:\n"
+        "  - name: DB_PASSWORD\n"
+        "    valueFrom:\n"
+        '      secretKeyRef: "db-password"\n'
+        '  tokenSecretRef: "vault-token"\n'
+        '  passwordSecret: "postgres-credentials"\n'
+        "  passwordSecret: postgres-credentials\n"
+        "  password: ${DB_PASSWORD}\n"
+        "  password:\n"
+        "  api_token: !vault |\n"
+        "  db_password: DB_PASSWORD\n"
+        "  token_url: https://login.example.org/oauth/token\n"
+    ),
+    ".env": "DB_PASSWORD=\nAPI_TOKEN=${API_TOKEN}\nSECRET_KEY=changeme-Prod1\n",
+}
 
 
 def _secrets_by_file(leaks):
@@ -292,36 +351,42 @@ def _secrets_by_file(leaks):
 @pytest.mark.requires_gitleaks
 def test_bundled_rules_catch_passwords_and_connection_strings_range(git_repo):
     base = git_repo.commit({"README": "x\n"})
-    head = git_repo.commit({name: body for name, (body, _) in PASSWORD_POSITIVES.items()})
+    head = git_repo.commit({name: body for name, body, _ in PASSWORD_POSITIVES})
     found = _secrets_by_file(run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin()))
-    for name, (_, secret) in PASSWORD_POSITIVES.items():
+    for name, _, secret in PASSWORD_POSITIVES:
         assert secret in found.get(name, set()), name
 
 
 @pytest.mark.requires_gitleaks
 def test_bundled_rules_catch_passwords_and_connection_strings_dir(git_repo):
-    git_repo.commit({name: body for name, (body, _) in PASSWORD_POSITIVES.items()})
+    git_repo.commit({name: body for name, body, _ in PASSWORD_POSITIVES})
     found = _secrets_by_file(run_gitleaks(git_repo.path, "dir", bin=_bin()))
-    for name, (_, secret) in PASSWORD_POSITIVES.items():
+    for name, _, secret in PASSWORD_POSITIVES:
         assert secret in found.get(name, set()), name
 
 
 @pytest.mark.requires_gitleaks
 def test_bundled_rules_ignore_placeholders_and_env_lookups(git_repo):
     base = git_repo.commit({"README": "x\n"})
-    head = git_repo.commit({"settings.py": PASSWORD_NEGATIVES})
-    assert run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin()) == []
-    assert run_gitleaks(git_repo.path, "dir", bin=_bin()) == []
+    head = git_repo.commit(PASSWORD_NEGATIVES)
+    range_leaks = run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin())
+    assert [(l["File"], l["StartLine"], l["RuleID"]) for l in range_leaks] == []
+    dir_leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
+    assert [(l["File"], l["StartLine"], l["RuleID"]) for l in dir_leaks] == []
 
 
 @pytest.mark.requires_gitleaks
 def test_specific_rule_wins_over_password_rule_on_same_secret(git_repo):
     base = git_repo.commit({"a.py": "x = 1\n"})
-    head = git_repo.commit({"a.py": f'x = 1\ntoken = "{AWS}"\n'})
+    line = f'api_key = "{STRIPE}"'
+    head = git_repo.commit({"a.py": f"x = 1\n{line}\n"})
     leaks = run_gitleaks(git_repo.path, "range", DiffRefs(base, head), bin=_bin())
-    changed = [ChangedFile("a.py", None, {2: f'token = "{AWS}"'}, "")]
+    # Non-vacuous: both rules really report this secret ...
+    assert {l["RuleID"] for l in leaks} == {"stripe-access-token", "hardcoded-password"}
+    changed = [ChangedFile("a.py", None, {2: line}, "")]
     result, _ = secret_findings(leaks, changed, [])
-    assert [(f.rule, f.line) for f in result.findings] == [("aws-access-token", 2)]
+    # ... but only the specific one becomes a finding.
+    assert [(f.rule, f.line) for f in result.findings] == [("stripe-access-token", 2)]
 
 
 def test_fallback_rule_dropped_when_specific_rule_reports_same_secret():
