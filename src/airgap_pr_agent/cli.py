@@ -8,6 +8,7 @@ from pathlib import Path
 from .checks.secrets import SecretScanError
 from .config import ConfigError, load_config
 from .gitops import DiffRefs, GitError
+from .llm import LLMClient
 from .platforms.base import LogOnlyPlatform, Platform
 from .platforms.gitlab import GitLabPlatform, refs_from_env
 from .review import run_review
@@ -55,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         repo = Path(args.repo)
         cfg = load_config(repo)
-        llm = None  # LLM client arrives with a later task
+        llm = LLMClient.from_env(cfg.llm, os.environ, max_requests=cfg.llm.max_requests_per_mr)
         platform = _platform(args)
         gitleaks_bin = os.environ.get("GITLEAKS_BIN", "gitleaks")
         return run_review(repo, platform, cfg, llm, gitleaks_bin)
