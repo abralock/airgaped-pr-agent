@@ -1,5 +1,8 @@
+import os
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -146,10 +149,21 @@ def test_release_workflow():
     assert push["platforms"] == "linux/amd64,linux/arm64"
     assert push["push"] is True
     assert push["context"] == "."
-    tags = push["tags"].splitlines()
-    assert tags == [
-        "${{ steps.image.outputs.name }}:${{ github.ref_name }}",
-        "${{ steps.image.outputs.name }}:latest",
-    ]
-    assert "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/airgaped-pr-agent" in " ".join(runs)
+    assert push["tags"] == "${{ steps.image.outputs.tags }}"  # see the test below
     assert "dist/pr-agent-bundle-*.tar.gz" in steps["softprops/action-gh-release@v2"]["with"]["files"]
+
+
+@pytest.mark.parametrize("ref,latest", [("v0.2.0", True), ("v0.2.0-rc1", False)])
+def test_release_moves_latest_only_for_final_tags(tmp_path, ref, latest):
+    doc, _ = _workflow("release.yml")
+    (job,) = doc["jobs"].values()
+    [step] = [s for s in job["steps"] if s.get("id") == "image"]
+    out = tmp_path / "out"
+    env = {"PATH": os.environ["PATH"], "GITHUB_OUTPUT": str(out),
+           "GITHUB_REPOSITORY_OWNER": "Acme", "GITHUB_REF_NAME": ref}
+    subprocess.run(["bash", "-e", "-c", step["run"]], env=env, check=True)
+    values = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    image = "ghcr.io/acme/airgaped-pr-agent"
+    assert values["name"] == image
+    expected = [f"{image}:{ref}"] + ([f"{image}:latest"] if latest else [])
+    assert values["tags"].split(",") == expected
