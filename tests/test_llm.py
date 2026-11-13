@@ -180,9 +180,9 @@ def test_extract_json_braces_in_surrounding_prose():
 
 
 @pytest.mark.parametrize("content", [None, [{"type": "text", "text": "{}"}], 5])
-def test_non_string_content_is_malformed(content):
+def test_non_string_content_is_unparseable_reply(content):
     def handler(req):
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
-    with pytest.raises(LLMUnavailable):
+    with pytest.raises(ValueError):
         make(handler).complete_json("s", "u")

@@ -140,6 +140,6 @@ class LLMClient:
             except (ValueError, KeyError, IndexError, TypeError):
                 raise LLMUnavailable("model endpoint returned a malformed response") from None
             if not isinstance(content, str):
-                raise LLMUnavailable("model endpoint returned a malformed response")
+                raise ValueError("model reply content is not text")
             return extract_json(content)
         raise LLMUnavailable(f"model endpoint unavailable after {self._retries + 1} attempts: {last}")
