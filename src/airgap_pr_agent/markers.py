@@ -11,5 +11,18 @@ def fp_marker(fp: str) -> str:
 
 
 def parse_fp(body: str) -> str | None:
-    m = _FP.search(body)
-    return m.group(1) if m else None
+    # The agent writes its marker last; an earlier one is quoted text.
+    found = _FP.findall(body)
+    return found[-1] if found else None
+
+
+def is_summary(body: str) -> bool:
+    """The summary body starts with its marker; elsewhere it is quoted text."""
+    return body.lstrip().startswith(SUMMARY_MARKER)
+
+
+def strip_comment_markers(text: str) -> str:
+    """Remove HTML comment delimiters, so untrusted text cannot forge a marker."""
+    while "<!--" in text or "-->" in text:
+        text = text.replace("<!--", "").replace("-->", "")
+    return text

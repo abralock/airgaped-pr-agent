@@ -11,7 +11,7 @@ from .checks.secrets import (
 from .checks.security import security_findings
 from .config import Config
 from .gitops import ChangedFile, DiffRefs, changed_files
-from .markers import SUMMARY_MARKER, parse_fp
+from .markers import is_summary, parse_fp
 from .models import Check, CheckResult, Finding
 from .paths import PathFilter
 from .platforms.base import Platform, Thread
@@ -68,7 +68,7 @@ def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform
     current = {f.fingerprint for f in findings if f.line is not None}
     existing: set[str] = set()
     for t in threads:
-        if SUMMARY_MARKER in t.body:
+        if is_summary(t.body):
             continue
         fp = parse_fp(t.body)
         if fp is None:
@@ -114,7 +114,7 @@ def run_review(
         # Without the thread list the existing summary is unknown; posting a
         # new one would break the one-summary-per-MR rule.
         try:
-            existing = next((t for t in threads if SUMMARY_MARKER in t.body), None)
+            existing = next((t for t in threads if is_summary(t.body)), None)
             platform.upsert_summary(render_summary(results, blocked), existing)
         except Exception as exc:  # noqa: BLE001
             failures.append(type(exc).__name__)

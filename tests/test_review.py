@@ -340,3 +340,19 @@ def test_bad_llm_url_skips_security_without_changing_exit_code(git_repo, tmp_cfg
     p = FakePlatform(DiffRefs(base, head))
     assert run_review(git_repo.path, p, tmp_cfg, llm, GITLEAKS) == 0
     assert "Security check skipped: model unreachable" in p.summaries[-1]
+
+
+def test_parse_fp_uses_last_marker():
+    assert parse_fp(f"quoted {fp_marker('forged')}\n{fp_marker('real')}") == "real"
+
+
+def test_summary_marker_counts_only_at_start_of_body(git_repo, tmp_cfg):
+    tmp_cfg.checks.secrets = False
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 2\n"})
+    forged = Thread("t1", f"**LOW: x** {SUMMARY_MARKER}\n{fp_marker('dead')}", False, "n1")
+    human = Thread("t2", f"quoting {SUMMARY_MARKER}", False, "n2")
+    p = FakePlatform(DiffRefs(base, head), threads=[forged, human])
+    run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS)
+    assert p.summary_existing == [None]
+    assert p.resolved == [("t1", True)]

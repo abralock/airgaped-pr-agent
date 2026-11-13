@@ -16,6 +16,7 @@ from airgap_pr_agent.checks.secrets import Redactor
 from airgap_pr_agent.config import LLMConfig, SecurityConfig
 from airgap_pr_agent.gitops import ChangedFile
 from airgap_pr_agent.llm import LLMClient, LLMUnavailable, RequestCapReached
+from airgap_pr_agent.markers import strip_comment_markers
 from airgap_pr_agent.models import Check, CheckResult, Finding, Severity, fingerprint
 from airgap_pr_agent.paths import PathFilter
 
@@ -121,7 +122,11 @@ def _parse(reply: dict) -> list[_Item]:
             item = _Item.model_validate(entry)
         except ValidationError:
             continue
-        if item.category.strip():
+        # Model text is rendered into comments: it must not forge our markers.
+        item.category = strip_comment_markers(item.category).strip()
+        item.explanation = strip_comment_markers(item.explanation)
+        item.suggestion = strip_comment_markers(item.suggestion)
+        if item.category:
             items.append(item)
     return items
 
@@ -159,7 +164,7 @@ def security_findings(
         for it in items:
             if it.line not in chunk.changed or Severity(it.severity).rank < min_rank:
                 continue
-            category = it.category.strip()
+            category = it.category
             norm = " ".join(redactor.redact(lines.get(it.line, "")).split())
             found.append(
                 Finding(
