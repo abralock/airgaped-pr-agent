@@ -298,6 +298,11 @@ PASSWORD_POSITIVES = [
     ("k13.py", 'password = "hunter2-prod"\n', "hunter2-prod"),
     ("k14.env", "API_TOKEN=Q9X7Z2LMPK4R8T\n", "Q9X7Z2LMPK4R8T"),
     ("k15.env", "DB_PASSWORD=hunter2_prod99\n", "hunter2_prod99"),
+    # Exemptions for references, env names and ciphers must not swallow these (ruling R19).
+    ("k16.py", 'password = "file:Hunter2!prod"\n', "file:Hunter2!prod"),
+    ("k17.py", 'password = "$UPERS3CRET9"\n', "$UPERS3CRET9"),
+    ("k18.py", 'signing_key = "rsa-Q9x7Z2Lm4R"\n', "rsa-Q9x7Z2Lm4R"),
+    ("k19.py", 'private_key = "~/Hunter2!prod"\n', "~/Hunter2!prod"),
 ]
 
 # Must not be reported. The placeholders have enough entropy to pass the
@@ -387,16 +392,57 @@ PASSWORD_NEGATIVES = {
         "  existingSecret: my-release-postgresql\n"
         "  password: {{ .Values.auth.password | b64enc | quote }}\n"
     ),
+    # Key material is usually a file; ciphers are algorithm names (ruling R19).
+    "keys.py": (
+        'private_key = "~/.ssh/id_rsa"\n'
+        'private_key = "./keys/private.pem"\n'
+        'private_key = "../keys/private.pem"\n'
+        'private_key = "certs/server-2024.pem"\n'
+        'master_key = "config/master.key"\n'
+        'private_key = "C:/certs/tls-2024.pfx"\n'
+        'private_key = "C:\\\\certs\\\\tls-2024.pfx"\n'
+        'encryption_key = "aes-256-gcm"\n'
+        'encryption_key = "aes-128-cbc"\n'
+        'signing_key = "ecdsa-p256"\n'
+        'signing_key = "sha512"\n'
+        'signing_key = "hmac-sha256"\n'
+        'signing_key = "ed25519"\n'
+        'secret_key = "S3_SECRET_KEY"\n'
+        'password = "OAUTH2_CLIENT_SECRET"\n'
+        'token = "K8S_SERVICE_TOKEN"\n'
+        'secret = "$K8S_SECRET"\n'
+        'password = "classpath:keystore.p12"\n'
+        'password = "file:/etc/app/secret.txt"\n'
+        'password = "vault:secret/data/app#password"\n'
+    ),
+    "ci/keys.yaml": (
+        "private_key: ~/.ssh/id_ed25519\n"
+        "signing_key: keys/jwt-2024.pem\n"
+        "secret_key: $S3_SECRET_KEY\n"
+        "token: $K8S_TOKEN\n"
+    ),
+    # Shell command substitution in .envrc is a lookup, not a value.
+    ".envrc": (
+        "export GITHUB_TOKEN=$(security find-generic-password -s gh -w)\n"
+        "export DB_PASSWORD=$(terraform output -raw db_password)\n"
+        "export KUBE_TOKEN=$(kubectl get secret x -o jsonpath)\n"
+        "export AWS_SECRET_ACCESS_KEY=$(aws-vault exec prod -- env)\n"
+        "export API_TOKEN=`security find-generic-password -s api -w`\n"
+    ),
 }
 
 
 @pytest.mark.requires_gitleaks
 def test_upstream_generic_rule_baseline_is_not_suppressed(git_repo):
     # The name-shaped allowlists apply only to the bundled rules. Upstream
-    # generic-api-key keeps its own behaviour, false positives included.
-    git_repo.commit({"a.py": 'password_hasher = "argon2id-v19"\n'})
+    # generic-api-key keeps its own behaviour, false positives included:
+    # stock gitleaks flags both lines too.
+    git_repo.commit({"a.py": 'password_hasher = "argon2id-v19"\nencryption_key = "chacha20-poly1305"\n'})
     leaks = run_gitleaks(git_repo.path, "dir", bin=_bin())
-    assert [(l["RuleID"], l["Secret"]) for l in leaks] == [("generic-api-key", "argon2id-v19")]
+    assert sorted((l["RuleID"], l["Secret"]) for l in leaks) == [
+        ("generic-api-key", "argon2id-v19"),
+        ("generic-api-key", "chacha20-poly1305"),
+    ]
 
 
 def _secrets_by_file(leaks):

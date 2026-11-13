@@ -36,9 +36,11 @@ entropy = 3.0
 keywords = ["password", "passwd", "pwd", "pass", "secret", "token", "api_key", "api-key", "apikey", "key"]
 
 [[rules.allowlists]]
-description = "YAML tags, anchors, aliases and block scalars"
+description = "YAML tags, anchors, aliases and block scalars; shell command substitution"
 regexTarget = "secret"
-regexes = ['''^[!&*|>]''']
+# export TOKEN=$(security find-generic-password ...) would otherwise report
+# the fragment "$(security".
+regexes = ['''^[!&*|>]''', '''^(?:\$\(|`)''']
 
 [[rules]]
 id = "connection-string-credentials"
@@ -72,27 +74,37 @@ regexes = [
   '''\{\{[^}]*\}\}''',
   '''^<[^>]*>$''',
   '''%\([^)]*\)s''',
-  '''^\$[A-Z]+(?:_[A-Z]+[0-9]{0,2})*$''',
+  # $VAR: one segment of letters with up to two trailing digits ($PGPASSWORD,
+  # $OAUTH2), or several segments that may each hold one run of 1-2 digits
+  # ($K8S_SECRET, $S3_SECRET_KEY). $UPERS3CRET9 is not a name.
+  '''^\$(?:[A-Z]+[0-9]{0,2}|[A-Z]+(?:[0-9]{1,2}[A-Z]*)?(?:_[A-Z]+(?:[0-9]{1,2}[A-Z]*)?)+)$''',
   '''^\$\([A-Za-z_][A-Za-z0-9_.]*\)$''',
 ]
 
 # Values that are names rather than secrets: env var names (DB_PASSWORD,
-# OPENAI_API_KEY), words joined by separators (db-credentials,
-# bert-base-uncased, monitoring/basic-auth), single or CamelCase words
-# (Authorization, SecretsManager), resource references, paths, URLs and
-# ARNs. Every segment must be a word: letters only, except at most two
-# trailing digits in later env-var segments. So random tokens
-# (QX7Z2LMPK4R8T..., ABCD_EFGH1234_..., hunter2-prod) are still reported,
-# while a password made only of letters (Sunshine, correct-horse-battery)
-# is not. Only the bundled rules use this list; upstream generic-api-key keeps
-# its own behaviour.
+# OPENAI_API_KEY, S3_SECRET_KEY, K8S_SERVICE_TOKEN), words joined by
+# separators (db-credentials, bert-base-uncased, monitoring/basic-auth),
+# single or CamelCase words (Authorization, SecretsManager), paths and
+# key files (~/.ssh/id_rsa, certs/server.pem), file:/vault:/classpath:
+# references, URLs, ARNs and cipher names (aes-256-gcm, hmac-sha256).
+# Words are letters only; an env-var segment may also hold one run of 1-2
+# digits; a ~/, ./, ../, file:, vault: or classpath: value and a key file
+# name must be made of path characters only; cipher names come from a fixed
+# vocabulary. So random tokens (QX7Z2LMPK4R8T..., ABCD_EFGH1234_...,
+# hunter2-prod, file:Hunter2!prod, rsa-Q9x7...) are still reported, while
+# a password made only of letters (Sunshine, correct-horse-battery) is not.
+# Only the bundled rules use this list; upstream generic-api-key keeps its
+# own behaviour.
 [[allowlists]]
 description = "Names, identifiers, paths and URLs"
 targetRules = ["hardcoded-password", "hardcoded-password-unquoted"]
 regexTarget = "secret"
 regexes = [
-  '''^[A-Z]{2,}(?:_[A-Z]+[0-9]{0,2})+$''',
+  '''^[A-Z]+(?:[0-9]{1,2}[A-Z]*)?(?:_[A-Z]+(?:[0-9]{1,2}[A-Z]*)?)+$''',
   '''^\p{L}+(?:[-_./]\p{L}+)+[?!.:]?$''',
   '''^\p{Lu}?\p{Ll}+(?:\p{Lu}\p{Ll}+)*$''',
-  '''^(?:/|https?://|arn:|classpath:|file:|vault:|s3://|gs://)''',
+  '''^(?:/|https?://|arn:|s3://|gs://)''',
+  '''^(?:~/|\.\.?/|file:|vault:|classpath:)[\w./#-]*$''',
+  '''^[\w./:\\-]*\.(?i:pem|key|crt|cer|p12|pfx|jks|keystore|der)$''',
+  '''(?i:^(?:aes|rsa|ecdsa|ecdh|ed25519|ed448|x25519|chacha20|xchacha20|hmac|sha)(?:[-_]?(?:\d{1,4}|sha\d{1,3}|gcm|cbc|ctr|ccm|siv|ecb|ofb|cfb|xts|poly1305|oaep|pss|pkcs1|p\d{3})){0,4}$)''',
 ]
