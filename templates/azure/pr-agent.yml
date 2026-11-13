@@ -1,0 +1,67 @@
+# Azure DevOps pipeline template. Use from a pipeline with:
+#
+#   resources:
+#     repositories:
+#       - repository: pr-agent
+#         type: git
+#         name: devtools/pr-agent
+#   extends/jobs:
+#     - template: templates/azure/pr-agent.yml@pr-agent
+#       parameters:
+#         image: registry.internal/devtools/pr-agent:1
+#         pool: { name: internal-linux }
+#         mode: review        # or: scan
+#
+# Review mode must run in a pull request validation build (branch policy).
+# Set LLM_API_KEY as a secret pipeline variable. The build service identity
+# needs "Contribute to pull requests" on the repository.
+parameters:
+  - name: image
+    type: string
+    default: registry.internal/devtools/pr-agent:1
+  - name: pool
+    type: object
+    default:
+      name: Default
+  - name: mode
+    type: string
+    default: review
+    values:
+      - review
+      - scan
+  - name: history
+    type: boolean
+    default: false
+
+jobs:
+  - job: pr_agent
+    displayName: PR agent (${{ parameters.mode }})
+    pool: ${{ parameters.pool }}
+    container: ${{ parameters.image }}
+    steps:
+      # Full history is required: the secrets scan fails closed if the PR
+      # merge base is not present in the clone.
+      - checkout: self
+        fetchDepth: 0
+      - ${{ if eq(parameters.mode, 'review') }}:
+          - script: pr-agent review
+            displayName: PR agent review
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+              LLM_API_KEY: $(LLM_API_KEY)
+      - ${{ if eq(parameters.mode, 'scan') }}:
+          - ${{ if eq(parameters.history, true) }}:
+              - script: pr-agent scan --out-dir pr-agent-report --history
+                displayName: PR agent full scan (with history)
+                env:
+                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+                  LLM_API_KEY: $(LLM_API_KEY)
+          - ${{ if ne(parameters.history, true) }}:
+              - script: pr-agent scan --out-dir pr-agent-report
+                displayName: PR agent full scan
+                env:
+                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+                  LLM_API_KEY: $(LLM_API_KEY)
+          - publish: pr-agent-report
+            artifact: pr-agent-report
+            condition: always()

@@ -28,3 +28,50 @@ def test_gitlab_template_scan_job():
     assert {"if": '$CI_PIPELINE_SOURCE == "schedule"'} in rules
     web = [r for r in rules if "web" in r["if"]]
     assert len(web) == 1 and web[0]["when"] == "manual" and web[0]["allow_failure"] is True
+
+
+def _flatten(steps):
+    """Expand `${{ if ... }}:` template-expression keys into their step lists."""
+    out = []
+    for s in steps:
+        if isinstance(s, dict) and len(s) == 1 and str(next(iter(s))).startswith("${{"):
+            out.extend(_flatten(next(iter(s.values()))))
+        else:
+            out.append(s)
+    return out
+
+
+def _azure_steps():
+    doc = yaml.safe_load((ROOT / "templates/azure/pr-agent.yml").read_text())
+    return doc, _flatten(doc["jobs"][0]["steps"])
+
+
+def test_azure_template():
+    doc, steps = _azure_steps()
+    params = {p["name"]: p for p in doc["parameters"]}
+    assert set(params) == {"image", "pool", "mode", "history"}
+    assert params["mode"]["values"] == ["review", "scan"]
+    assert params["history"]["type"] == "boolean" and params["history"]["default"] is False
+    job = doc["jobs"][0]
+    assert job["container"] == "${{ parameters.image }}"
+    assert any(s.get("checkout") == "self" and s.get("fetchDepth") == 0 for s in steps)
+    scripts = [s for s in steps if "script" in s]
+    assert {s["script"] for s in scripts} == {
+        "pr-agent review",
+        "pr-agent scan --out-dir pr-agent-report",
+        "pr-agent scan --out-dir pr-agent-report --history",
+    }
+    for s in scripts:
+        assert s["env"]["SYSTEM_ACCESSTOKEN"] == "$(System.AccessToken)"
+        assert s["env"]["LLM_API_KEY"] == "$(LLM_API_KEY)"
+
+
+def test_azure_template_scan_publishes_report_always():
+    doc, steps = _azure_steps()
+    pubs = [s for s in steps if "publish" in s]
+    assert pubs == [
+        {"publish": "pr-agent-report", "artifact": "pr-agent-report", "condition": "always()"}
+    ]
+    scan_block = doc["jobs"][0]["steps"][-1]
+    assert next(iter(scan_block)) == "${{ if eq(parameters.mode, 'scan') }}"
+    assert not any("publish" in s for s in _flatten(doc["jobs"][0]["steps"][1:2]))

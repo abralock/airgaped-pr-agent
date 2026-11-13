@@ -145,11 +145,8 @@ def test_cli_auto_detects_gitlab_and_falls_back_to_log_only(monkeypatch, capsys)
     assert "PR_AGENT_GITLAB_TOKEN" in capsys.readouterr().err
 
 
-def test_cli_auto_azure_and_unknown(monkeypatch, capsys):
+def test_cli_unknown_platform_exits_3(monkeypatch, capsys):
     monkeypatch.delenv("GITLAB_CI", raising=False)
-    monkeypatch.setenv("TF_BUILD", "True")
-    assert main(["review"]) == 3
-    assert "azure" in capsys.readouterr().err
-    monkeypatch.delenv("TF_BUILD")
+    monkeypatch.delenv("TF_BUILD", raising=False)
     assert main(["review"]) == 3
     assert "--platform" in capsys.readouterr().err

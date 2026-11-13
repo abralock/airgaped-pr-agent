@@ -10,6 +10,7 @@ from .config import ConfigError, load_config
 from .fullscan import run_full_scan
 from .gitops import DiffRefs, GitError
 from .llm import LLMClient
+from .platforms.azure import AzurePlatform, refs_from_repo as azure_refs_from_repo
 from .platforms.base import LogOnlyPlatform, Platform
 from .platforms.gitlab import GitLabPlatform, refs_from_env
 from .review import run_review
@@ -40,7 +41,7 @@ def _platform(args: argparse.Namespace) -> Platform:
         if os.environ.get("GITLAB_CI") == "true":
             platform = "gitlab"
         elif os.environ.get("TF_BUILD") == "True":
-            raise ConfigError("platform 'azure' is not available yet")
+            platform = "azure"
         else:
             raise ConfigError("cannot detect CI platform; pass --platform (or local)")
     if platform == "gitlab":
@@ -53,6 +54,17 @@ def _platform(args: argparse.Namespace) -> Platform:
             file=sys.stderr,
         )
         return LogOnlyPlatform(refs_from_env(os.environ))
+    if platform == "azure":
+        repo = Path(args.repo)
+        az = AzurePlatform.from_env(os.environ, repo)
+        if az is not None:
+            return az
+        print(
+            "pr-agent: warning: SYSTEM_ACCESSTOKEN is not set; "
+            "findings will be printed, not posted to the pull request",
+            file=sys.stderr,
+        )
+        return LogOnlyPlatform(azure_refs_from_repo(repo))
     raise ConfigError(f"platform {platform!r} is not available yet")
 
 
