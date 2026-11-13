@@ -512,3 +512,19 @@ def test_real_gitleaks_dir_mode_relative_repo_path(git_repo, monkeypatch):
     monkeypatch.chdir(git_repo.path)
     leaks = run_gitleaks(Path("."), "dir", bin=_bin())
     assert [l["File"] for l in leaks if l["Secret"] == AWS] == ["sub/a.py"]
+
+
+def test_redact_findings_masks_non_secret_text_only():
+    from airgap_pr_agent.checks.secrets import redact_findings
+    from airgap_pr_agent.models import CheckResult, Finding
+
+    sec, _ = secret_findings([LEAK], [CF], [])
+    other = Finding(Check.SECURITY, "app.py", 3, Severity.HIGH, f"Security: {RAW}",
+                    f"uses {RAW}", "fp", suggestion=f'pw = "{RAW}"')
+    plain = Finding(Check.NON_ENGLISH, "app.py", 1, Severity.LOW, "T", "m", "fp2")
+    results = [sec, CheckResult(Check.SECURITY, [other]), CheckResult(Check.NON_ENGLISH, [plain])]
+    before = list(sec.findings)
+    redact_findings(results, Redactor([RAW]))
+    [f] = results[1].findings
+    assert RAW not in f.title + f.message + f.suggestion and "Hunt****" in f.message
+    assert results[0].findings == before and results[2].findings == [plain]

@@ -12,6 +12,7 @@ import re
 import subprocess
 import tempfile
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -64,6 +65,26 @@ class Redactor:
         for raw, masked in self._targets:
             text = text.replace(raw, masked)
         return text
+
+
+def redact_findings(results: list[CheckResult], redactor: Redactor) -> None:
+    """Mask known secrets in the text of every non-secret finding, in place.
+
+    The single choke point before findings reach comments, logs and reports:
+    other checks quote source text or model output, which can hold a secret.
+    """
+    for r in results:
+        if r.check is Check.SECRETS:
+            continue
+        r.findings = [
+            replace(
+                f,
+                title=redactor.redact(f.title),
+                message=redactor.redact(f.message),
+                suggestion=redactor.redact(f.suggestion) if f.suggestion else f.suggestion,
+            )
+            for f in r.findings
+        ]
 
 
 def _relative_posix(file: str, repo: Path) -> str:

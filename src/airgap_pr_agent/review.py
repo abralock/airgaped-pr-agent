@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from .checks.language import non_english_findings
-from .checks.secrets import Redactor, run_gitleaks, secret_findings
+from .checks.secrets import Redactor, redact_findings, run_gitleaks, secret_findings
 from .checks.security import security_findings
 from .config import Config
 from .gitops import ChangedFile, DiffRefs, changed_files
@@ -38,12 +38,13 @@ def run_checks(
         results.append(result)
     if cfg.checks.non_english:
         flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude, cfg.non_english.exclude)
-        results.append(non_english_findings(changed, cfg.non_english, flt))
+        results.append(non_english_findings(changed, cfg.non_english, flt, redactor))
     if cfg.checks.security:
         flt = PathFilter.from_globs(cfg.paths.include, cfg.paths.exclude)
         results.append(
             security_findings(changed, llm, cfg.security, cfg.llm, redactor, flt)
         )
+    redact_findings(results, redactor)
     return results
 
 

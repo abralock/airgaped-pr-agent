@@ -84,3 +84,14 @@ def test_math_and_unit_symbols_allowed(text):
 def test_real_greek_and_cjk_flagged():
     assert "Greek" in classify("Καλημέρα κόσμε", 4, 0.7)
     assert "non-Latin" in classify("获取", 4, 0.7)
+
+
+def test_quoted_text_redacted_before_truncation():
+    from airgap_pr_agent.checks.secrets import Redactor
+
+    secret = "Rq8vLm2KxW9pTz4N"
+    # The secret straddles the 80-character quote limit: a cut after redaction
+    # must never leave a raw prefix the Redactor no longer recognises.
+    src = f'# 临时用这个 {"x" * 60} "{secret}" 以后再改\n'
+    [f] = non_english_findings([_all_added("a.py", src)], CFG, FILTER, Redactor([secret])).findings
+    assert "Rq8vL" not in f.message and "Rq8v" in f.message

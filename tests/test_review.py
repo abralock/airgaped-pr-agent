@@ -178,3 +178,32 @@ def test_model_down_does_not_fail_job(git_repo, tmp_cfg):
     p = FakePlatform(DiffRefs(base, head))
     assert run_review(git_repo.path, p, tmp_cfg, llm, "gitleaks") == 0
     assert "Security check skipped: model unreachable" in p.summaries[-1]
+
+
+# A secret and CJK text on one line: the non-English check must not quote it raw.
+CJK_SECRET = "Rq8vLm2KxW9pTz4N"
+CJK_LINE = f'# 临时用这个 password = "{CJK_SECRET}" 以后再改\n'
+
+
+@pytest.mark.requires_gitleaks
+def test_secret_inside_non_english_comment_is_masked_everywhere(git_repo, tmp_cfg, capsys):
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    head = git_repo.commit({"a.py": "x = 1\n" + CJK_LINE})
+    p = FakePlatform(DiffRefs(base, head))
+    assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 1
+    bodies = [body for _, _, body in p.posted] + p.summaries
+    assert any("Non-English" in b for b in bodies) and any("Rq8v****" in b for b in bodies)
+    for b in bodies:
+        assert CJK_SECRET not in b
+
+
+@pytest.mark.requires_gitleaks
+def test_secret_inside_non_english_comment_masked_in_local_output(git_repo, capsys):
+    from airgap_pr_agent.cli import main
+
+    base = git_repo.commit({"a.py": "x = 1\n"})
+    git_repo.commit({"a.py": "x = 1\n" + CJK_LINE})
+    rc = main(["review", "--platform", "local", "--repo", str(git_repo.path), "--base", base])
+    captured = capsys.readouterr()
+    assert rc == 1 and "Non-English" in captured.out
+    assert CJK_SECRET not in captured.out + captured.err

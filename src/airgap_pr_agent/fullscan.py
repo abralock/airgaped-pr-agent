@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .checks.language import non_english_findings
-from .checks.secrets import Redactor, run_gitleaks, secret_findings
+from .checks.secrets import Redactor, redact_findings, run_gitleaks, secret_findings
 from .checks.security import security_findings
 from .config import Config
 from .gitops import tracked_files, whole_files
@@ -47,11 +47,12 @@ def run_full_scan(
     ]
     files = whole_files(repo, candidates)
     if cfg.checks.non_english:
-        results.append(non_english_findings(files, cfg.non_english, ne_filter))
+        results.append(non_english_findings(files, cfg.non_english, ne_filter, redactor))
     if cfg.checks.security:
         results.append(
             security_findings(files, llm, cfg.security, cfg.llm, redactor, sec_filter)
         )
+    redact_findings(results, redactor)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     name = repo.resolve().name

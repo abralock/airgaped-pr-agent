@@ -17,6 +17,7 @@ from ..config import NonEnglishConfig
 from ..gitops import ChangedFile
 from ..models import Check, CheckResult, Finding, Severity, fingerprint
 from ..paths import PathFilter
+from .secrets import Redactor
 
 Kind = Literal["comment", "string", "line"]
 
@@ -139,7 +140,10 @@ def _norm(text: str) -> str:
 
 
 def non_english_findings(
-    files: list[ChangedFile], cfg: NonEnglishConfig, path_filter: PathFilter
+    files: list[ChangedFile],
+    cfg: NonEnglishConfig,
+    path_filter: PathFilter,
+    redactor: Redactor | None = None,
 ) -> CheckResult:
     findings: list[Finding] = []
     for f in files:
@@ -159,7 +163,9 @@ def non_english_findings(
                 "string": "Non-English text in string",
                 "line": "Non-English text",
             }[span.kind]
-            quoted = " ".join(span.text.split())[:80]
+            # Redact before truncating, so a cut can never leave a raw secret prefix.
+            shown = redactor.redact(span.text) if redactor is not None else span.text
+            quoted = " ".join(shown.split())[:80]
             findings.append(
                 Finding(
                     check=Check.NON_ENGLISH,

@@ -99,3 +99,19 @@ def test_history_dedupes_across_dir_and_history(git_repo, tmp_cfg, tmp_path):
 
 def test_cli_scan_error_exit_3(tmp_path, capsys):
     assert main(["scan", "--repo", str(tmp_path), "--out-dir", str(tmp_path / "o")]) == 3
+
+
+@pytest.mark.requires_gitleaks
+def test_secret_inside_non_english_comment_masked_in_all_reports(git_repo, tmp_cfg, tmp_path, capsys):
+    secret = "Rq8vLm2KxW9pTz4N"
+    git_repo.commit({"a.py": f'x = 1\n# 临时用这个 password = "{secret}" 以后再改\n'})
+    tmp_cfg.full_scan.sarif = True
+    out = tmp_path / "out"
+    assert _scan(git_repo, tmp_cfg, out) == 1
+    doc = json.loads((out / "report.json").read_text())
+    ne = next(c for c in doc["checks"] if c["check"] == "non_english")
+    assert ne["findings"]
+    for f in out.iterdir():
+        assert secret not in f.read_text(), f.name
+    captured = capsys.readouterr()
+    assert secret not in captured.out + captured.err
