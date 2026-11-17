@@ -8,7 +8,13 @@ import httpx
 from airgap_pr_agent.config import ConfigError
 from airgap_pr_agent.gitops import DiffRefs
 
-from .base import PlatformError, Thread
+from .base import PlatformError, Thread, response_detail, transport_detail
+
+_HINTS = {
+    401: "token rejected: check that PR_AGENT_GITLAB_TOKEN is valid and not expired",
+    403: "the token needs the api scope and at least the Developer role on this project",
+    404: "the token cannot see this project or merge request",
+}
 
 
 def refs_from_env(env: Mapping[str, str]) -> DiffRefs:
@@ -34,6 +40,7 @@ class GitLabPlatform:
     ) -> None:
         self._refs = refs
         self._mr = f"/projects/{project_id}/merge_requests/{mr_iid}"
+        self._token = token
         self._client = httpx.Client(
             base_url=api_url.rstrip("/"),
             headers={"PRIVATE-TOKEN": token},
@@ -61,9 +68,11 @@ class GitLabPlatform:
         try:
             resp = self._client.request(method, path, **kw)
         except httpx.HTTPError as exc:
-            raise PlatformError(f"GitLab {method} {path} failed: {type(exc).__name__}") from None
+            detail = transport_detail(exc, self._token)
+            raise PlatformError(f"GitLab {method} {path} failed: {detail}") from None
         if not resp.is_success:
-            raise PlatformError(f"GitLab {method} {path} returned HTTP {resp.status_code}")
+            detail = response_detail(resp, self._token, _HINTS)
+            raise PlatformError(f"GitLab {method} {path} returned {detail}")
         return resp
 
     def _latest_version(self) -> dict[str, Any]:

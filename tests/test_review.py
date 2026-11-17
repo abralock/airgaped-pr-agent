@@ -257,7 +257,10 @@ def test_rejected_inline_post_still_posts_others_and_summary(git_repo, tmp_cfg, 
     assert run_review(git_repo.path, p, tmp_cfg, None, GITLEAKS) == 0
     assert [line for _, line, _ in p.posted] == [3]
     assert len(p.summaries) == 1
-    assert "could not post" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "could not post" in out
+    # The reason is printed, not just the exception type.
+    assert "PlatformError: GitLab POST returned HTTP 400" in out
 
 
 def test_failed_resolve_does_not_stop_summary(git_repo, tmp_cfg):

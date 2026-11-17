@@ -49,6 +49,12 @@ def run_checks(
     return results
 
 
+def _describe(exc: Exception) -> str:
+    # Adapters build their messages without the token; keep the reason, not just the type.
+    text = " ".join(str(exc).split())[:400]
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform) -> list[str]:
     """Sync bot threads with the findings. Returns the names of the calls that failed:
     one rejected comment (for example on a collapsed diff) must not stop the rest."""
@@ -58,7 +64,7 @@ def reconcile(findings: list[Finding], threads: list[Thread], platform: Platform
         try:
             call()
         except Exception as exc:  # noqa: BLE001 - any platform failure is non-fatal
-            failures.append(type(exc).__name__)
+            failures.append(_describe(exc))
 
     current = {f.fingerprint for f in findings if f.line is not None}
     existing: set[str] = set()
@@ -97,12 +103,12 @@ def run_review(
     try:
         threads = platform.list_threads()
     except Exception as exc:  # noqa: BLE001 - includes non-JSON 2xx replies
-        failures.append(type(exc).__name__)
+        failures.append(_describe(exc))
     if threads is not None:
         try:
             inline = platform.can_post_inline()
         except Exception as exc:  # noqa: BLE001
-            failures.append(type(exc).__name__)
+            failures.append(_describe(exc))
             inline = False
         if inline:
             failures += reconcile(findings, threads, platform)
@@ -112,9 +118,11 @@ def run_review(
             existing = next((t for t in threads if is_summary(t.body)), None)
             platform.upsert_summary(render_summary(results, blocked), existing)
         except Exception as exc:  # noqa: BLE001
-            failures.append(type(exc).__name__)
+            failures.append(_describe(exc))
     if failures:
-        print(f"pr-agent: could not post review comments: {', '.join(sorted(set(failures)))}")
+        print("pr-agent: could not post review comments:")
+        for reason in dict.fromkeys(failures):
+            print(f"  - {reason}")
         for f in findings:
             print(f"{f.path}:{f.line if f.line is not None else '-'}: {f.title}")
     return 1 if blocked else 0

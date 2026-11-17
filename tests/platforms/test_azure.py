@@ -242,3 +242,18 @@ def test_cli_azure_outside_pr_build_exits_3(monkeypatch, capsys, git_repo):
     git_repo.commit({"a": "1"}, "root")
     assert main(["review", "--repo", str(git_repo.path)]) == 3
     assert "merge commit" in capsys.readouterr().err
+
+
+def test_http_error_includes_azure_message_and_hint():
+    p, _ = make(lambda r: httpx.Response(403, json={"message": "TF401027: You need Contribute to pull requests"}))
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    msg = str(ei.value)
+    assert "HTTP 403: TF401027" in msg and "Contribute to pull requests" in msg
+
+
+def test_azure_error_echoing_token_is_scrubbed():
+    p, _ = make(lambda r: httpx.Response(400, json={"message": f"bad {TOKEN}"}))
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    assert "HTTP 400" in str(ei.value) and TOKEN not in str(ei.value)

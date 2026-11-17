@@ -122,6 +122,23 @@ secrets. It prints the findings to the job log instead of posting them, and
 logs a warning. If `LLM_BASE_URL` or `LLM_API_KEY` is missing, the security
 check is skipped and the summary says so.
 
+### Internal TLS certificates
+
+If GitLab or the model endpoint uses a certificate from an internal CA, the
+agent can't verify it with its built-in CA list. The log then shows
+`CERTIFICATE_VERIFY_FAILED`. Add a CI/CD variable of type **File** named
+`SSL_CERT_FILE` and paste your CA bundle (PEM) as its value. GitLab writes it
+to a file and passes the path. The bundle replaces the built-in list, so it
+must hold every CA the agent needs to trust.
+
+### When comments don't appear
+
+If the job log shows `pr-agent: could not post review comments:`, the next
+lines give the API call, the HTTP status, GitLab's own message and what to
+check. For example, `HTTP 403` means the token lacks the `api` scope or the
+Developer role. The findings are printed below those lines, and the exit
+code is the same as if posting had worked.
+
 ### Include the template
 
 Put `templates/gitlab/pr-agent.gitlab-ci.yml` in a shared project, for example

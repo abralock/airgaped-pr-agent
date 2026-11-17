@@ -11,7 +11,13 @@ import httpx
 from airgap_pr_agent.config import ConfigError
 from airgap_pr_agent.gitops import DiffRefs, GitError, merge_base, rev_parse
 
-from .base import PlatformError, Thread
+from .base import PlatformError, Thread, response_detail, transport_detail
+
+_HINTS = {
+    401: "token rejected: check that SYSTEM_ACCESSTOKEN is mapped into the step",
+    403: "the build service identity needs 'Contribute to pull requests' on this repository",
+    404: "the token cannot see this repository or pull request",
+}
 
 _RESOLVED = {"fixed", "closed", "wontFix", "byDesign"}
 _DEFAULT_API_VERSION = "6.0"
@@ -48,6 +54,7 @@ class AzurePlatform:
         self._refs = refs
         self._pr = f"{_q(project)}/_apis/git/repositories/{_q(repo_id)}/pullRequests/{_q(pr_id)}"
         self._api_version = os.environ.get("PR_AGENT_ADO_API_VERSION") or _DEFAULT_API_VERSION
+        self._token = token
         self._client = httpx.Client(
             base_url=collection_uri.rstrip("/") + "/",
             headers={"Authorization": f"Bearer {token}"},
@@ -80,9 +87,11 @@ class AzurePlatform:
                 method, path, params={"api-version": self._api_version}, **kw
             )
         except httpx.HTTPError as exc:
-            raise PlatformError(f"Azure DevOps {method} {path} failed: {type(exc).__name__}") from None
+            detail = transport_detail(exc, self._token)
+            raise PlatformError(f"Azure DevOps {method} {path} failed: {detail}") from None
         if not resp.is_success:
-            raise PlatformError(f"Azure DevOps {method} {path} returned HTTP {resp.status_code}")
+            detail = response_detail(resp, self._token, _HINTS)
+            raise PlatformError(f"Azure DevOps {method} {path} returned {detail}")
         return resp
 
     def diff_refs(self) -> DiffRefs:

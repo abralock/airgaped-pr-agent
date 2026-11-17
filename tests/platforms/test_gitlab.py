@@ -150,3 +150,41 @@ def test_cli_unknown_platform_exits_3(monkeypatch, capsys):
     monkeypatch.delenv("TF_BUILD", raising=False)
     assert main(["review"]) == 3
     assert "--platform" in capsys.readouterr().err
+
+
+def test_http_error_includes_gitlab_message_and_hint():
+    p, _ = make(lambda r: httpx.Response(403, json={"message": "403 Forbidden"}))
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    msg = str(ei.value)
+    assert "HTTP 403: 403 Forbidden" in msg
+    assert "Developer role" in msg and "api" in msg
+
+
+def test_http_401_hint_names_the_token_variable():
+    p, _ = make(lambda r: httpx.Response(401, json={"message": "401 Unauthorized"}))
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    assert "PR_AGENT_GITLAB_TOKEN" in str(ei.value)
+
+
+def test_error_echoing_token_is_scrubbed():
+    p, _ = make(lambda r: httpx.Response(400, json={"message": f"bad {TOKEN}"}))
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    assert "HTTP 400" in str(ei.value) and TOKEN not in str(ei.value)
+
+
+def test_tls_failure_explains_ssl_cert_file():
+    def boom(request):
+        raise httpx.ConnectError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            f"self-signed certificate in certificate chain {TOKEN}"
+        )
+
+    p, _ = make(boom)
+    with pytest.raises(PlatformError) as ei:
+        p.list_threads()
+    msg = str(ei.value)
+    assert "CERTIFICATE_VERIFY_FAILED" in msg and "SSL_CERT_FILE" in msg
+    assert TOKEN not in msg and ei.value.__cause__ is None
